@@ -1,0 +1,54 @@
+from flask import Flask, request, jsonify, send_file
+from pmf_score_engine import build_scores_from_raw, calculate_pmf_score
+from pdf_template_kor_v2 import generate_pmf_report_v2
+from pdf_to_drive_reporter import upload_pdf_to_drive_with_oauth
+import tempfile, os, json
+
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return 'PMF Studio API is running.'
+
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({'status':'ok'})
+
+@app.route('/score', methods=['POST'])
+def score():
+    raw = request.json or {}
+    comps = build_scores_from_raw(raw)
+    score, stage, comps_used = calculate_pmf_score(comps)
+    return jsonify({'pmf_score': score, 'stage': stage, 'components': comps_used})
+
+@app.route('/report', methods=['POST'])
+def report():
+    raw = request.json or {}
+    comps = build_scores_from_raw(raw)
+    score, stage, comps_used = calculate_pmf_score(comps)
+    pdf_data = {
+        'startup_name': raw.get('startup_name','N/A'),
+        'problem': raw.get('problem',''),
+        'solution': raw.get('solution',''),
+        'target': raw.get('target',''),
+        'pmf_score': score,
+        'validation_stage': stage,
+        'recommendations': raw.get('recommendations',''),
+        'summary': raw.get('summary',''),
+        'market_data': raw.get('market_data',''),
+        'ai_summary': raw.get('ai_summary',''),
+        'usp': raw.get('usp','N/A')
+    }
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+    tmp.close()
+    generate_pmf_report_v2(pdf_data, tmp.name)
+    try:
+        drive_resp = upload_pdf_to_drive_with_oauth(tmp.name, pdf_data.get('startup_name','report'))
+        drive_link = drive_resp.get('webViewLink') if drive_resp else None
+    except Exception as e:
+        drive_link = None
+    return jsonify({'pmf_score': score, 'stage': stage, 'drive_link': drive_link})
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
