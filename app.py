@@ -20,6 +20,7 @@ if SENTRY_DSN:
 
 app = Flask(__name__)
 
+
 def _get_token_from_request(req):
     t = None
     if 'X-Access-Token' in req.headers:
@@ -27,6 +28,7 @@ def _get_token_from_request(req):
     if not t:
         t = req.args.get('token')
     return t
+
 
 def _require_valid_token_or_403(req):
     token = _get_token_from_request(req)
@@ -40,6 +42,7 @@ def _require_valid_token_or_403(req):
 def index():
     return 'PMF Studio API is running.'
 
+
 @app.route('/health', methods=['GET'])
 def health():
     test_error = request.args.get("test_error")
@@ -47,12 +50,14 @@ def health():
         raise ValueError("Sentry DSN 테스트 오류 발생")
     return jsonify({"status": "ok", "message": "PMF Studio API is running"}), 200
 
+
 @app.route('/score', methods=['POST'])
 def score():
-ok, info = _require_valid_token_or_403(request)
-if not ok:
-    return jsonify({'error': 'token_invalid', 'detail': info[1]}), 403
     """입력 데이터 기반 PMF 점수 계산"""
+    ok, info = _require_valid_token_or_403(request)
+    if not ok:
+        return jsonify({'error': 'token_invalid', 'detail': info[1]}), 403
+
     try:
         raw = request.json or {}
         comps = build_scores_from_raw(raw)
@@ -62,29 +67,31 @@ if not ok:
         app.logger.error(f"PMF score calculation error: {str(e)}")
         raise
 
+
 @app.route('/report', methods=['POST'])
 def report():
-ok, info = _require_valid_token_or_403(request)
-if not ok:
-    return jsonify({'error': 'token_invalid', 'detail': info[1]}), 403
     """PDF 리포트 생성 및 Google Drive 업로드"""
+    ok, info = _require_valid_token_or_403(request)
+    if not ok:
+        return jsonify({'error': 'token_invalid', 'detail': info[1]}), 403
+
     try:
         raw = request.json or {}
         comps = build_scores_from_raw(raw)
         score, stage, comps_used = calculate_pmf_score(comps)
 
         pdf_data = {
-            'startup_name': raw.get('startup_name','N/A'),
-            'problem': raw.get('problem',''),
-            'solution': raw.get('solution',''),
-            'target': raw.get('target',''),
+            'startup_name': raw.get('startup_name', 'N/A'),
+            'problem': raw.get('problem', ''),
+            'solution': raw.get('solution', ''),
+            'target': raw.get('target', ''),
             'pmf_score': score,
             'validation_stage': stage,
-            'recommendations': raw.get('recommendations',''),
-            'summary': raw.get('summary',''),
-            'market_data': raw.get('market_data',''),
-            'ai_summary': raw.get('ai_summary',''),
-            'usp': raw.get('usp','N/A')
+            'recommendations': raw.get('recommendations', ''),
+            'summary': raw.get('summary', ''),
+            'market_data': raw.get('market_data', ''),
+            'ai_summary': raw.get('ai_summary', ''),
+            'usp': raw.get('usp', 'N/A')
         }
 
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
@@ -92,7 +99,10 @@ if not ok:
         generate_pmf_report_v2(pdf_data, tmp.name)
 
         try:
-            drive_resp = upload_pdf_to_drive_with_oauth(tmp.name, pdf_data.get('startup_name','report'))
+            drive_resp = upload_pdf_to_drive_with_oauth(
+                tmp.name,
+                pdf_data.get('startup_name', 'report')
+            )
             drive_link = drive_resp.get('webViewLink') if drive_resp else None
         except Exception as e:
             app.logger.error(f"Drive upload error: {str(e)}")
@@ -109,9 +119,6 @@ if not ok:
         app.logger.error(f"Report generation error: {str(e)}")
         raise
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
 
 @app.route('/tokens', methods=['GET', 'POST'])
 def tokens_admin():
@@ -137,10 +144,12 @@ def tokens_admin():
     if request.method == 'POST':
         action = request.form.get('action')
         db = _load_db()
+
         if action == 'create':
             label = request.form.get('label') or ''
             perm = request.form.get('perm') or 'trial'
             days = int(request.form.get('days') or '7')
+
             import uuid
             token = uuid.uuid4().hex
             expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
@@ -153,6 +162,7 @@ def tokens_admin():
             }
             _save_db(db)
             msg = f'새 토큰 생성: {token}'
+
         elif action == 'revoke':
             token = request.form.get('token')
             if token in db:
@@ -200,14 +210,18 @@ def tokens_admin():
     </body>
     </html>
     '''
-    # Convert db to simple object for template
+
     simple_db = {}
     for k, v in db.items():
         simple_db[k] = {
-            'label': v.get('label',''),
-            'perm': v.get('perm',''),
-            'expires_at': v.get('expires_at',''),
-            'active': v.get('active',True)
+            'label': v.get('label', ''),
+            'perm': v.get('perm', ''),
+            'expires_at': v.get('expires_at', ''),
+            'active': v.get('active', True)
         }
     return render_template_string(html, db=simple_db, msg=msg)
 
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
