@@ -68,30 +68,53 @@ def score():
         raise
 
 
-@app.route('/report', methods=['POST'])
+@app.route('/report', methods=['GET', 'POST'])
 def report():
     """PDF 리포트 생성 및 Google Drive 업로드"""
+
+    # 토큰 검증
     ok, info = _require_valid_token_or_403(request)
     if not ok:
         return jsonify({'error': 'token_invalid', 'detail': info[1]}), 403
 
+    # 사용자가 브라우저로 링크만 열었을 때(GET)
+    if request.method == 'GET':
+        return render_template_string("""
+        <html>
+          <head><title>PMF Studio Report</title></head>
+          <body>
+            <h2>PMF Studio Report</h2>
+            <p>이 링크는 접근 권한(토큰)을 확인하는 용도입니다.</p>
+            <p>리포트를 생성하려면 아래 방식으로 요청해야 합니다:</p>
+            <pre>
+POST /report?token=YOUR_TOKEN
+Content-Type: application/json
+
+{ ... PMF 입력 데이터 ... }
+            </pre>
+            <p>즉, 이 페이지는 프로그램/폼/도구에서 데이터를 POST로 보내야 리포트가 생성됩니다.</p>
+          </body>
+        </html>
+        """)
+
+    # 실제 리포트 생성(POST)
     try:
         raw = request.json or {}
         comps = build_scores_from_raw(raw)
         score, stage, comps_used = calculate_pmf_score(comps)
 
         pdf_data = {
-            'startup_name': raw.get('startup_name', 'N/A'),
-            'problem': raw.get('problem', ''),
-            'solution': raw.get('solution', ''),
-            'target': raw.get('target', ''),
+            'startup_name': raw.get('startup_name','N/A'),
+            'problem': raw.get('problem',''),
+            'solution': raw.get('solution',''),
+            'target': raw.get('target',''),
             'pmf_score': score,
             'validation_stage': stage,
-            'recommendations': raw.get('recommendations', ''),
-            'summary': raw.get('summary', ''),
-            'market_data': raw.get('market_data', ''),
-            'ai_summary': raw.get('ai_summary', ''),
-            'usp': raw.get('usp', 'N/A')
+            'recommendations': raw.get('recommendations',''),
+            'summary': raw.get('summary',''),
+            'market_data': raw.get('market_data',''),
+            'ai_summary': raw.get('ai_summary',''),
+            'usp': raw.get('usp','N/A')
         }
 
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
@@ -99,16 +122,12 @@ def report():
         generate_pmf_report_v2(pdf_data, tmp.name)
 
         try:
-            drive_resp = upload_pdf_to_drive_with_oauth(
-                tmp.name,
-                pdf_data.get('startup_name', 'report')
-            )
+            drive_resp = upload_pdf_to_drive_with_oauth(tmp.name, pdf_data.get('startup_name','report'))
             drive_link = drive_resp.get('webViewLink') if drive_resp else None
         except Exception as e:
             app.logger.error(f"Drive upload error: {str(e)}")
             drive_link = None
 
-        # PDF 파일 삭제 (옵션)
         try:
             os.remove(tmp.name)
         except Exception as e:
