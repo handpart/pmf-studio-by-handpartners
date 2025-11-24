@@ -9,7 +9,7 @@ import sentry_sdk
 from sentry_sdk.integrations.flask import FlaskIntegration
 
 # Sentry 설정
-SENTRY_DSN = os.getenv("SENTRY_DSN")
+SENTRY_DSN = (os.getenv("SENTRY_DSN") or "").strip()
 if SENTRY_DSN:
     sentry_sdk.init(
         dsn=SENTRY_DSN,
