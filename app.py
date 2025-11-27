@@ -145,13 +145,17 @@ def _generate_report_and_optionally_store(raw):
     generate_pmf_report_v2(pdf_data, tmp.name)
 
     drive_link = None
-    try:
-        drive_resp = upload_pdf_to_drive_with_oauth(
-            tmp.name, pdf_data.get("startup_name", "report")
-        )
-        drive_link = drive_resp.get("webViewLink") if drive_resp else None
-    except Exception as e:
-        app.logger.error(f"Drive upload error: {str(e)}")
+
+    # 환경변수 ENABLE_DRIVE_UPLOAD 이 "true"일 때만 업로드 시도
+    enable_drive = (os.getenv("ENABLE_DRIVE_UPLOAD") or "").lower() == "true"
+    if enable_drive:
+        try:
+            drive_resp = upload_pdf_to_drive_with_oauth(
+                tmp.name, pdf_data.get("startup_name", "report")
+            )
+            drive_link = drive_resp.get("webViewLink") if drive_resp else None
+        except Exception as e:
+            app.logger.error(f"Drive upload error: {str(e)}")
 
     # 임시 파일 삭제
     try:
