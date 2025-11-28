@@ -283,8 +283,7 @@ def ui_form():
 
     # GET: 질문지 폼 렌더링
     if request.method == "GET":
-        return render_template_string(
-            """
+        return render_template_string("""
         <html>
         <head>
             <title>PMF Studio by HAND PARTNERS</title>
@@ -299,11 +298,11 @@ def ui_form():
                 <input type="hidden" name="token" value="{{token}}"/>
 
                 <h3>A. 기본 정보</h3>
+                <label>리포트를 받을 이메일 주소</label><br/>
+                <input name="contact_email" type="email" style="width:100%;padding:8px"/><br/><br/>
+
                 <label>스타트업 이름</label><br/>
                 <input name="startup_name" style="width:100%;padding:8px"/><br/><br/>
-
-		<label>리포트를 받을 이메일 주소</label><br/>
-		<input name="contact_email" type="email" style="width:100%;padding:8px"/><br/><br/>
 
                 <label>산업/분야</label><br/>
                 <input name="industry" placeholder="예: B2B SaaS, 바이오, 커머스" style="width:100%;padding:8px"/><br/><br/>
@@ -409,11 +408,9 @@ def ui_form():
             </form>
         </body>
         </html>
-        """,
-            token=token,
-        )
+        """, token=token)
 
-    # POST: 폼 입력 내용을 raw dict에 그대로 담아서 사용
+    # POST: 폼 입력을 raw dict로 구성
     raw = {k: request.form.get(k) for k in request.form.keys()}
     contact_email = raw.get("contact_email")
 
@@ -442,8 +439,7 @@ def ui_form():
     stage=stage,
     token=token,
     contact_email=contact_email,
-    email_sent=email_sent
-    )
+    email_sent=email_sent)
  
 
 # =========================
