@@ -258,13 +258,13 @@ Content-Type: application/json
     # POST: JSON 기반 리포트 생성
     try:
         raw = request.json or {}
-	score, stage, drive_link, email_sent = _generate_report_and_optionally_store(raw)
-	return jsonify({
-	    "pmf_score": score,
-	    "stage": stage,
-	    "drive_link": drive_link,   # 항상 None
-	    "email_sent": email_sent
-	})
+        score, stage, drive_link, email_sent = _generate_report_and_optionally_store(raw)
+        return jsonify({
+            "pmf_score": score,
+            "stage": stage,
+            "drive_link": drive_link,   # 항상 None
+            "email_sent": email_sent
+        })
     except Exception as e:
         app.logger.error(f"Report generation error: {str(e)}")
         raise
@@ -440,7 +440,7 @@ def ui_form():
     token=token,
     contact_email=contact_email,
     email_sent=email_sent)
- 
+
 
 # =========================
 # /tokens : 토큰 관리 (JSON 로컬)
