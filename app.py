@@ -8,7 +8,7 @@ from flask import Flask, request, jsonify, render_template_string
 from token_validation import validate_token_simple
 from pmf_score_engine import build_scores_from_raw, calculate_pmf_score
 from pdf_template_kor_v2 import generate_pmf_report_v2
-from pdf_to_drive_reporter import upload_pdf_to_drive_with_oauth
+from email_reporter import send_pmf_report_email
 
 import sentry_sdk
 from sentry_sdk.integrations.flask import FlaskIntegration
@@ -120,7 +120,7 @@ def _store_report(report_record):
 # =========================
 def _generate_report_and_optionally_store(raw):
     """
-    raw 입력을 받아 PMF score 계산 + PDF 생성 + Drive 업로드 + 저장까지 수행
+    raw 입력을 받아 PMF score 계산 + PDF 생성 + 이메일 전송 + 저장까지 수행
     """
     comps = build_scores_from_raw(raw)
     score, stage, comps_used = calculate_pmf_score(comps)
@@ -139,43 +139,52 @@ def _generate_report_and_optionally_store(raw):
         "usp": raw.get("usp", "N/A"),
     }
 
-    # PDF 생성
+    # 1) PDF 생성
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     tmp.close()
     generate_pmf_report_v2(pdf_data, tmp.name)
 
-    drive_link = None
-
-    # 환경변수 ENABLE_DRIVE_UPLOAD 이 "true"일 때만 업로드 시도
-    enable_drive = (os.getenv("ENABLE_DRIVE_UPLOAD") or "").lower() == "true"
-    if enable_drive:
+    # 2) 이메일 전송 시도
+    to_email = raw.get("contact_email") or raw.get("email")
+    email_sent = False
+    email_error = None
+    if to_email:
         try:
-            drive_resp = upload_pdf_to_drive_with_oauth(
-                tmp.name, pdf_data.get("startup_name", "report")
+            send_pmf_report_email(
+                to_email,
+                tmp.name,
+                pdf_data["startup_name"],
+                score,
+                stage,
             )
-            drive_link = drive_resp.get("webViewLink") if drive_resp else None
+            email_sent = True
         except Exception as e:
-            app.logger.error(f"Drive upload error: {str(e)}")
+            email_error = str(e)
+            app.logger.error(f"Email send error: {e}")
 
-    # 임시 파일 삭제
+    # 3) PDF 임시 파일 삭제
     try:
         os.remove(tmp.name)
     except Exception as e:
         app.logger.warning(f"Temporary file deletion failed: {e}")
 
-    # 저장용 레코드 구성
+    # 4) 저장용 레코드 구성
     report_record = {
         "id": uuid.uuid4().hex,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "startup_name": pdf_data["startup_name"],
         "pmf_score": score,
         "stage": stage,
-        "drive_link": drive_link,
+        "drive_link": None,  # 더 이상 사용하지 않지만 필드는 유지
+        "email": to_email,
+        "email_sent": email_sent,
+        "email_error": email_error,
         "raw": raw,
     }
     _store_report(report_record)
 
-    return score, stage, drive_link
+    # 기존 인터페이스 유지: drive_link 대신 None, email_sent 추가
+    return score, stage, None, email_sent
 
 
 # =========================
@@ -249,8 +258,13 @@ Content-Type: application/json
     # POST: JSON 기반 리포트 생성
     try:
         raw = request.json or {}
-        score, stage, drive_link = _generate_report_and_optionally_store(raw)
-        return jsonify({"pmf_score": score, "stage": stage, "drive_link": drive_link})
+	score, stage, drive_link, email_sent = _generate_report_and_optionally_store(raw)
+	return jsonify({
+	    "pmf_score": score,
+	    "stage": stage,
+	    "drive_link": drive_link,   # 항상 None
+	    "email_sent": email_sent
+	})
     except Exception as e:
         app.logger.error(f"Report generation error: {str(e)}")
         raise
@@ -287,6 +301,9 @@ def ui_form():
                 <h3>A. 기본 정보</h3>
                 <label>스타트업 이름</label><br/>
                 <input name="startup_name" style="width:100%;padding:8px"/><br/><br/>
+
+		<label>리포트를 받을 이메일 주소</label><br/>
+		<input name="contact_email" type="email" style="width:100%;padding:8px"/><br/><br/>
 
                 <label>산업/분야</label><br/>
                 <input name="industry" placeholder="예: B2B SaaS, 바이오, 커머스" style="width:100%;padding:8px"/><br/><br/>
@@ -398,33 +415,36 @@ def ui_form():
 
     # POST: 폼 입력 내용을 raw dict에 그대로 담아서 사용
     raw = {k: request.form.get(k) for k in request.form.keys()}
+    contact_email = raw.get("contact_email")
 
-    score, stage, drive_link = _generate_report_and_optionally_store(raw)
+    score, stage, drive_link, email_sent = _generate_report_and_optionally_store(raw)
 
-    return render_template_string(
-        """
+    return render_template_string("""
     <html>
     <head><title>PMF Studio Result</title></head>
     <body style="max-width:820px;margin:40px auto;font-family:Arial;">
       <h2>PMF 진단 결과</h2>
       <p><b>PMF Score:</b> {{score}}</p>
       <p><b>Stage:</b> {{stage}}</p>
-      {% if drive_link %}
-        <p><a href="{{drive_link}}" target="_blank">Google Drive 리포트 열기</a></p>
+
+      {% if email_sent and contact_email %}
+        <p>입력하신 이메일 주소 <b>{{contact_email}}</b> 로 PMF 리포트를 전송했습니다.</p>
       {% else %}
-        <p>Drive 업로드 링크가 없습니다.</p>
+        <p>이메일 발송 설정이 활성화되지 않아, 화면에만 결과를 표시합니다.</p>
       {% endif %}
+
       <hr/>
       <a href="/ui?token={{token}}">다시 진단하기</a>
     </body>
     </html>
     """,
-        score=score,
-        stage=stage,
-        drive_link=drive_link,
-        token=token,
+    score=score,
+    stage=stage,
+    token=token,
+    contact_email=contact_email,
+    email_sent=email_sent
     )
-
+ 
 
 # =========================
 # /tokens : 토큰 관리 (JSON 로컬)
