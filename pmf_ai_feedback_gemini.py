@@ -12,6 +12,7 @@ except ImportError:
 
 # 어떤 필드를 보고 "성실하게 썼는지" 평가할지 기준
 KEY_FIELDS = [
+    "industry", "business_item",  # ← 추가
     "problem", "problem_intensity", "current_alternatives", "willingness_to_pay",
     "target", "beachhead_customer", "customer_access",
     "solution", "usp", "mvp_status", "pricing_model",
@@ -82,6 +83,7 @@ def _build_prompt(raw: dict, score, stage: str, quality_score: float) -> str:
     --- 스타트업 개요 ---
     - 스타트업 이름: {g("startup_name")}
     - 산업/분야: {g("industry")}
+    - 사업 아이템 소개: {g("business_item")
     - 현재 단계: {g("startup_stage")}
     - 팀 규모: {g("team_size")}
 
@@ -121,7 +123,7 @@ def _build_prompt(raw: dict, score, stage: str, quality_score: float) -> str:
     --- 작성 방식 가이드 ---
     1. 한국어로 A4용지 4장 정도 분량의 내용으로 작성해 주세요.
     2. 구조는 다음 네 부분을 나눠서 작성해주세요:
-       (1) 산업/분야에 대한 현황 요약
+       (1) 사업 아이템 소개를 분석하여 이에 속하는 산업/분야에 대한 현황 요약
        (2) 현재 PMF 관점에서의 진단 요약
        (3) 지금 보이는 강점 2~3가지와 단점 2~3가지
        (4) 향후 4주 안에 반드시 검증해야 할 핵심 가설과 실행 제안

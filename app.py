@@ -336,6 +336,7 @@ def _generate_report_and_optionally_store(raw):
         # 기본 정보
         "contact_email": raw.get("contact_email", ""),
         "industry": raw.get("industry", ""),
+        "business_item": raw.get("business_item", ""),  # ← 추가
         "startup_stage": raw.get("startup_stage", ""),
         "team_size": raw.get("team_size", ""),
 
@@ -458,6 +459,7 @@ def _generate_report_for_download(raw):
         # 기본 정보
         "contact_email": raw.get("contact_email", ""),
         "industry": raw.get("industry", ""),
+        "business_item": raw.get("business_item", ""),  # ← 동일하게 추가
         "startup_stage": raw.get("startup_stage", ""),
         "team_size": raw.get("team_size", ""),
 
@@ -627,6 +629,10 @@ def ui_form():
                 <input name="industry"
                        placeholder="예: B2B SaaS, 리테일 테크, 헬스케어, 교육, 커머스 등"
                        style="width:100%;padding:8px"/><br/><br/>
+
+                <label>사업 아이템 소개</label><br/>
+                <textarea name="business_item" rows="3" style="width:100%;padding:8px"
+                       placeholder="예: 국내 초기 창업자를 대상으로, 사업계획서 작성과 시장 검증을 단계별로 안내해 주는 온라인 PMF 진단·코칭 플랫폼입니다."></textarea><br/><br/>
 
                 <label>현재 단계</label><br/>
                 <select name="startup_stage" style="width:100%;padding:8px">

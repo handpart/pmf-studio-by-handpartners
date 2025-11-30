@@ -323,6 +323,7 @@ def generate_pmf_report_v2(data, output_path):
     stage_label = data.get("startup_stage", "")
     team_size = data.get("team_size", "")
     contact_email = data.get("contact_email", "")
+    business_item = data.get("business_item", "")  # ← 이 줄 추가
 
     overview_html = f"""
     <b>• 스타트업명:</b> {startup_name}<br/>
@@ -330,6 +331,7 @@ def generate_pmf_report_v2(data, output_path):
     <b>• PMF 단계:</b> {validation_stage}<br/>
     <b>• 현재 단계(창업 단계):</b> {_value_or_dash(stage_label)}<br/>
     <b>• 산업/분야:</b> {_value_or_dash(industry)}<br/>
+    <b>• 사업 아이템 소개:</b> {_value_or_dash(business_item)}<br/>
     <b>• 팀 규모:</b> {_value_or_dash(team_size)}<br/>
     <b>• 리포트 수신 이메일:</b> {_value_or_dash(contact_email)}<br/>
     <b>• 입력 데이터 신뢰도:</b> {quality_label} (Data Quality Score: {quality_score}/100)
