@@ -36,49 +36,153 @@ TITLE_FONT = "NanumGothicBold"   # 표지 큰 제목
 HEADER_FONT = "NanumGothicBold"  # 섹션 제목
 BODY_FONT = "NanumGothic"        # 본문
 
-def _build_rule_based_summary(score, stage):
+
+# ---------------------------
+# 데이터 품질 추정 (간단한 휴리스틱)
+# ---------------------------
+def _estimate_data_quality(data: dict) -> int:
     """
-    PMF 점수 / 단계에 따라 HAND PARTNERS 스타일의 기본 코멘트 생성
+    텍스트 기반 핵심 필드를 간단히 스코어링해서 0~100 사이의 데이터 품질 점수로 환산.
+    - 너무 짧은 답변, 숫자 위주 입력은 낮게
+    - 2~3문장 수준으로 정성스럽게 쓰면 자연스럽게 점수↑
+    """
+    key_fields = [
+        "problem",
+        "solution",
+        "target",
+        "pmf_pull_signal",
+        "key_feedback",
+    ]
+
+    total = 0
+    used = 0
+
+    for field in key_fields:
+        txt = str(data.get(field, "") or "").strip()
+        if not txt:
+            continue
+
+        used += 1
+        length = len(txt)
+        score = 0
+
+        # 길이에 따른 점수 (아주 길지 않아도, 어느 정도만 정성스럽게 쓰면 괜찮게 나오도록)
+        if length >= 60:
+            score += 45
+        elif length >= 30:
+            score += 35
+        elif length >= 15:
+            score += 25
+        else:
+            score += 10  # 한두 문장이라도 있으면 최소 점수
+
+        # 숫자 비율이 너무 높으면 감점 (대충 "123", "111" 이런 입력 방지용)
+        digits = sum(c.isdigit() for c in txt)
+        letters = sum(c.isalpha() for c in txt)
+        if digits > 0 and digits >= letters * 2:
+            score -= 20
+
+        total += max(score, 0)
+
+    if used == 0:
+        return 0
+
+    raw = total / used
+    return max(0, min(100, int(raw)))
+
+
+def _quality_label(score: int) -> str:
+    if score >= 70:
+        return "높음"
+    elif score >= 40:
+        return "보통"
+    else:
+        return "낮음"
+
+
+def _build_rule_based_summary(score, stage, quality_score: int) -> str:
+    """
+    PMF 점수 / 단계 / 데이터 품질에 따라 HAND PARTNERS 스타일의 코멘트 생성.
+    - 데이터 품질이 낮으면 우선 '정보 보완'을 강하게 권장
+    - 품질이 어느 정도 이상이면 점수 구간별로 전략 코멘트 제공
     """
     try:
         s = float(score)
     except Exception:
-        # 점수 파싱이 안 되면 아주 일반적인 코멘트
+        s = None
+
+    stage = (stage or "").lower()
+    q = quality_score or 0
+
+    # 1) 데이터 품질이 매우 낮은 경우: 점수보다 "먼저 제대로 쓰라"는 메시지
+    if q < 30:
+        base = (
+            "이번에 입력해 주신 내용은 길이가 매우 짧거나 숫자/형식적 표현이 많아, "
+            "PMF 진단 결과의 신뢰도가 낮은 상태입니다. "
+            "핵심 문제, 타겟 고객, 솔루션, 실제 고객 반응을 문장으로 2~3줄만 더 구체적으로 적어 주시면 "
+            "훨씬 깊이 있는 피드백을 드릴 수 있습니다. "
+        )
+        if s is not None:
+            base += (
+                "따라서 이번 PMF 점수와 단계는 참고용으로만 보시고, "
+                "교육/코칭 세션에서는 먼저 정보 보완과 가설 정리부터 진행하는 것을 권장드립니다."
+            )
+        else:
+            base += (
+                "다음 진단에서는 각 문항에 실제 사례와 수치를 곁들여 작성해 주시면, "
+                "보다 정교한 PMF 분석이 가능합니다."
+            )
+        return base
+
+    # 2) 데이터 품질이 중간 정도인 경우: 조심스럽게 해석 + 더 정성스러운 작성 유도
+    if q < 60 and s is not None:
+        prefix = (
+            f"입력 데이터의 신뢰도는 '보통({q}/100)' 수준으로, "
+            "PMF 신호를 어느 정도 가늠해 볼 수 있는 상태입니다. 다만 일부 문항은 "
+            "조금 더 구체적으로 작성해 주시면 해석 정확도가 높아질 수 있습니다. "
+        )
+    else:
+        prefix = ""
+
+    # 3) 점수에 따른 본격 코멘트
+    if s is None:
         return (
-            "현재 입력된 정보를 기반으로 PMF를 정성적으로 검토할 수 있는 초기 자료가 확보된 상태입니다. "
-            "핵심 가설(문제·고객·가치 제안)을 명확히 문서화하고, 4주 단위의 짧은 실험 사이클로 "
+            prefix
+            + "현재 입력된 정보를 기반으로 PMF를 정성적으로 검토할 수 있는 초기 자료가 확보된 상태입니다. "
+            "핵심 가설(문제·고객·가치 제안)을 문서화하고, 4주 단위의 짧은 실험 사이클로 "
             "검증–보완을 반복하는 전략을 권장드립니다."
         )
 
-    stage = (stage or "").lower()
-
     if s < 30:
         return (
-            "현재 단계는 아직 PMF 이전(Early Problem Fit)에 가까운 상태로 보입니다. "
-            "고객이 정말로 겪고 있는 구체적인 Pain을 더 깊게 정의하고, "
-            "문제의 강도·빈도·대안 솔루션에 대한 정성 인터뷰를 최소 10~20건 이상 추가 확보하는 것이 중요합니다. "
-            "이 시기에는 기능 개발보다 '올바른 문제 정의와 타겟 세분화'에 대부분의 에너지를 쓰는 것이 좋습니다."
+            prefix
+            + "현재 단계는 아직 PMF 이전(Early Problem Fit)에 가까운 상태로 보입니다. "
+            "고객이 실제로 겪는 Pain을 더 깊게 정의하고, 문제의 강도·빈도·대안 솔루션에 대한 "
+            "정성 인터뷰를 추가로 확보하는 것이 중요합니다. 이 시기에는 기능 개발보다 "
+            "'올바른 문제 정의와 타겟 세분화'에 대부분의 에너지를 쓰는 것이 좋습니다."
         )
     elif s < 50:
         return (
-            "Problem/Solution Fit 단계에 진입한 것으로 판단됩니다. "
-            "핵심 문제와 제안하는 솔루션 사이의 논리적 연결은 보이지만, 아직 고객의 반복 사용·지불 의사 측면에서 "
-            "명확한 신호가 부족합니다. "
-            "초기 Beachhead 세그먼트를 더 좁게 정의하고, 실제 파일럿·PoC를 통해 과금 실험과 리텐션 지표를 "
-            "집중적으로 확인해보는 것을 추천드립니다."
+            prefix
+            + "Problem/Solution Fit 단계에 진입한 것으로 판단됩니다. "
+            "핵심 문제와 제안하는 솔루션 사이의 논리적 연결은 보이지만, 아직 반복 사용·지불 의사 측면에서 "
+            "명확한 신호가 부족합니다. 초기 Beachhead 세그먼트를 더 좁게 정의하고, 파일럿·PoC를 통해 "
+            "과금 실험과 리텐션 지표를 집중적으로 확인해보는 것을 추천드립니다."
         )
     elif s < 70:
         return (
-            "초기 PMF 신호가 일부 관찰되고 있는 단계로 보입니다. "
+            prefix
+            + "초기 PMF 신호가 일부 관찰되고 있는 단계로 보입니다. "
             "재사용·재구매, 추천, 자연 유입 등에서 긍정적인 패턴이 나타나고 있으며, "
             "이제는 채널 별 유닛 이코노믹스(CAC/LTV)를 설계하고, 스케일업 가능성이 높은 세그먼트에 "
-            "집중하는 것이 중요합니다. "
-            "동시에 제품 사용 데이터를 기반으로 '헤비 유저의 공통점'을 분석해 보다 선명한 ICP를 정의해 보시길 권장합니다."
+            "집중하는 것이 중요합니다. 제품 사용 데이터를 기반으로 '헤비 유저의 공통점'을 분석해 "
+            "더 선명한 ICP를 정의해 보시길 권장합니다."
         )
     else:
         return (
-            "PMF에 상당히 근접했거나 특정 세그먼트에서는 이미 PMF에 도달한 상태로 해석됩니다. "
-            "이 단계에서는 무리한 기능 확장보다는, 검증된 핵심 가치 제안을 중심으로 운영 효율화와 "
+            prefix
+            + "특정 세그먼트에서는 이미 PMF에 상당히 근접했거나 도달한 상태로 해석됩니다. "
+            "이 단계에서는 무리한 기능 확장보다, 검증된 핵심 가치 제안을 중심으로 운영 효율화와 "
             "획득 채널 확장(Performance, 파트너십, 리셀러 등)에 집중하는 전략이 효과적입니다. "
             "동시에 고객 이탈 사유와 NPS를 정기적으로 모니터링하며, PMF 상태가 유지되는지 관리하는 것이 중요합니다."
         )
@@ -172,6 +276,10 @@ def generate_pmf_report_v2(data, output_path):
         textColor=colors.HexColor("#777777"),
     )
 
+    # ---------- 0. 데이터 품질 계산 ----------
+    quality_score = _estimate_data_quality(data)
+    quality_label = _quality_label(quality_score)
+
     # ---------- 1. 표지 ----------
     today = datetime.date.today().strftime("%Y-%m-%d")
     startup_name = data.get("startup_name", "N/A")
@@ -187,7 +295,7 @@ def generate_pmf_report_v2(data, output_path):
     )
     elements.append(Paragraph(cover_subtitle, cover_body_style))
     elements.append(Paragraph(today, small_style))
-    elements.append(Spacer(1, 30))
+    elements.append(Spacer(1, 20))
 
     intro_text = (
         "이 리포트는 HAND PARTNERS의 PMF Studio를 통해 수집된 정보를 바탕으로, "
@@ -196,6 +304,14 @@ def generate_pmf_report_v2(data, output_path):
         "다음 단계 실행을 위한 실질적인 논의 기반으로 활용할 수 있습니다."
     )
     elements.append(Paragraph(intro_text, cover_body_style))
+
+    note_text = (
+        "※ 각 문항을 성실하게, 실제 사례와 함께 2~3문장 이상 작성해 주실수록 "
+        "데이터 품질 점수가 높아지고, 리포트의 분석과 피드백도 더 정밀해집니다. "
+        "이 리포트는 교육·멘토링 세션에서 논의를 돕기 위한 참고 자료로 활용됩니다."
+    )
+    elements.append(Spacer(1, 10))
+    elements.append(Paragraph(note_text, small_style))
     elements.append(PageBreak())
 
     # ---------- 2. 스타트업 개요 ----------
@@ -215,7 +331,8 @@ def generate_pmf_report_v2(data, output_path):
     <b>• 현재 단계(창업 단계):</b> {_value_or_dash(stage_label)}<br/>
     <b>• 산업/분야:</b> {_value_or_dash(industry)}<br/>
     <b>• 팀 규모:</b> {_value_or_dash(team_size)}<br/>
-    <b>• 리포트 수신 이메일:</b> {_value_or_dash(contact_email)}
+    <b>• 리포트 수신 이메일:</b> {_value_or_dash(contact_email)}<br/>
+    <b>• 입력 데이터 신뢰도:</b> {quality_label} (Data Quality Score: {quality_score}/100)
     """
     elements.append(Paragraph(overview_html, body_style))
     elements.append(Spacer(1, 8))
@@ -301,10 +418,7 @@ def generate_pmf_report_v2(data, output_path):
     elements.append(Paragraph(section5_html, body_style))
     elements.append(Spacer(1, 10))
 
-    # ---------- 7. 종합 제언 및 다음 스텝 ----------
-    elements.append(Paragraph("6. 종합 제언 및 다음 스텝", section_title_style))
-
-    # ---------- 7. 종합 제언 및 다음 스텝 ----------
+    # ---------- 7. 종합 제언 및 다음 스텝 (한 번만!) ----------
     elements.append(Paragraph("6. 종합 제언 및 다음 스텝", section_title_style))
 
     summary = data.get("summary", "")
@@ -316,18 +430,12 @@ def generate_pmf_report_v2(data, output_path):
     if summary or recommendations:
         summary_text = summary or recommendations
     else:
-        # 2) 비어 있으면 PMF 점수/단계를 기반으로 규칙 기반 코멘트 생성
+        # 2) 비어 있으면 PMF 점수/단계 + 데이터 품질 기반 코멘트 생성
         summary_text = _build_rule_based_summary(
             data.get("pmf_score"),
             data.get("validation_stage"),
+            quality_score,
         )
-
-    section6_html = f"""
-    <b>HAND PARTNERS PMF 종합 코멘트</b><br/>{summary_text}<br/><br/>
-    <b>다음 4주 핵심 실행/실험 계획</b><br/>{_value_or_dash(next_experiments)}<br/><br/>
-    <b>가장 큰 리스크/검증해야 할 가설</b><br/>{_value_or_dash(biggest_risk)}
-    """
-    elements.append(Paragraph(section6_html, body_style))
 
     section6_html = f"""
     <b>HAND PARTNERS PMF 종합 코멘트</b><br/>{summary_text}<br/><br/>
