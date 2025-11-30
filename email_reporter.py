@@ -12,8 +12,8 @@ def send_pmf_report_email(to_email: str, pdf_path: str, startup_name: str, pmf_s
     - pmf_score, stage: 결과 요약용
     """
 
-    api_key = os.getenv("RESEND_API_KEY")
-    from_email = os.getenv("RESEND_FROM_EMAIL")
+    api_key = (os.getenv("RESEND_API_KEY") or "").strip()
+    from_email = (os.getenv("RESEND_FROM_EMAIL") or "").strip()
 
     if not api_key or not from_email or not to_email:
         raise RuntimeError("Resend 이메일 설정이 부족합니다. RESEND_API_KEY / RESEND_FROM_EMAIL / to_email 확인 필요.")
