@@ -126,58 +126,58 @@ def _generate_report_and_optionally_store(raw):
     comps = build_scores_from_raw(raw)
     score, stage, comps_used = calculate_pmf_score(comps)
 
-pdf_data = {
-    "startup_name": raw.get("startup_name", "N/A"),
-    "pmf_score": score,
-    "validation_stage": stage,
+    pdf_data = {
+        "startup_name": raw.get("startup_name", "N/A"),
+        "pmf_score": score,
+        "validation_stage": stage,
 
-    # 기본 정보
-    "contact_email": raw.get("contact_email", ""),
-    "industry": raw.get("industry", ""),
-    "startup_stage": raw.get("startup_stage", ""),
-    "team_size": raw.get("team_size", ""),
+        # 기본 정보
+        "contact_email": raw.get("contact_email", ""),
+        "industry": raw.get("industry", ""),
+        "startup_stage": raw.get("startup_stage", ""),
+        "team_size": raw.get("team_size", ""),
 
-    # Problem / 고객
-    "problem": raw.get("problem", ""),
-    "problem_intensity": raw.get("problem_intensity", ""),
-    "current_alternatives": raw.get("current_alternatives", ""),
-    "willingness_to_pay": raw.get("willingness_to_pay", ""),
-    "target": raw.get("target", ""),
-    "beachhead_customer": raw.get("beachhead_customer", ""),
-    "customer_access": raw.get("customer_access", ""),
+        # Problem / 고객
+        "problem": raw.get("problem", ""),
+        "problem_intensity": raw.get("problem_intensity", ""),
+        "current_alternatives": raw.get("current_alternatives", ""),
+        "willingness_to_pay": raw.get("willingness_to_pay", ""),
+        "target": raw.get("target", ""),
+        "beachhead_customer": raw.get("beachhead_customer", ""),
+        "customer_access": raw.get("customer_access", ""),
 
-    # Solution / Value
-    "solution": raw.get("solution", ""),
-    "usp": raw.get("usp", ""),
-    "mvp_status": raw.get("mvp_status", ""),
-    "pricing_model": raw.get("pricing_model", ""),
+        # Solution / Value
+        "solution": raw.get("solution", ""),
+        "usp": raw.get("usp", ""),
+        "mvp_status": raw.get("mvp_status", ""),
+        "pricing_model": raw.get("pricing_model", ""),
 
-    # Traction / Validation
-    "users_count": raw.get("users_count", ""),
-    "repeat_usage": raw.get("repeat_usage", ""),
-    "retention_signal": raw.get("retention_signal", ""),
-    "revenue_status": raw.get("revenue_status", ""),
-    "key_feedback": raw.get("key_feedback", ""),
+        # Traction / Validation
+        "users_count": raw.get("users_count", ""),
+        "repeat_usage": raw.get("repeat_usage", ""),
+        "retention_signal": raw.get("retention_signal", ""),
+        "revenue_status": raw.get("revenue_status", ""),
+        "key_feedback": raw.get("key_feedback", ""),
 
-    # Go-to-Market
-    "market_size": raw.get("market_size", ""),
-    "channels": raw.get("channels", ""),
-    "cac_ltv_estimate": raw.get("cac_ltv_estimate", ""),
+        # Go-to-Market
+        "market_size": raw.get("market_size", ""),
+        "channels": raw.get("channels", ""),
+        "cac_ltv_estimate": raw.get("cac_ltv_estimate", ""),
 
-    # PMF 신호
-    "pmf_pull_signal": raw.get("pmf_pull_signal", ""),
-    "referral_signal": raw.get("referral_signal", ""),
+        # PMF 신호
+        "pmf_pull_signal": raw.get("pmf_pull_signal", ""),
+        "referral_signal": raw.get("referral_signal", ""),
 
-    # 종합 요약/제언
-    "market_data": raw.get("market_data", ""),
-    "summary": raw.get("summary", ""),
-    "ai_summary": raw.get("ai_summary", ""),
-    "recommendations": raw.get("recommendations", ""),
+        # 종합 요약/제언
+        "market_data": raw.get("market_data", ""),
+        "summary": raw.get("summary", ""),
+        "ai_summary": raw.get("ai_summary", ""),
+        "recommendations": raw.get("recommendations", ""),
 
-    # 다음 실행
-    "next_experiments": raw.get("next_experiments", ""),
-    "biggest_risk": raw.get("biggest_risk", ""),
-}
+        # 다음 실행
+        "next_experiments": raw.get("next_experiments", ""),
+        "biggest_risk": raw.get("biggest_risk", ""),
+    }
 
     # 1) PDF 생성
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
@@ -226,6 +226,7 @@ pdf_data = {
     # 기존 인터페이스 유지: drive_link 대신 None, email_sent 추가
     return score, stage, None, email_sent
 
+
 def _generate_report_for_download(raw):
     """
     폼 입력(raw)을 받아:
@@ -240,24 +241,63 @@ def _generate_report_for_download(raw):
 
     pdf_data = {
         "startup_name": raw.get("startup_name", "N/A"),
-        "problem": raw.get("problem", ""),
-        "solution": raw.get("solution", ""),
-        "target": raw.get("target", ""),
         "pmf_score": score,
         "validation_stage": stage,
-        "recommendations": raw.get("recommendations", ""),
-        "summary": raw.get("summary", ""),
+
+        # 기본 정보
+        "contact_email": raw.get("contact_email", ""),
+        "industry": raw.get("industry", ""),
+        "startup_stage": raw.get("startup_stage", ""),
+        "team_size": raw.get("team_size", ""),
+
+        # Problem / 고객
+        "problem": raw.get("problem", ""),
+        "problem_intensity": raw.get("problem_intensity", ""),
+        "current_alternatives": raw.get("current_alternatives", ""),
+        "willingness_to_pay": raw.get("willingness_to_pay", ""),
+        "target": raw.get("target", ""),
+        "beachhead_customer": raw.get("beachhead_customer", ""),
+        "customer_access": raw.get("customer_access", ""),
+
+        # Solution / Value
+        "solution": raw.get("solution", ""),
+        "usp": raw.get("usp", ""),
+        "mvp_status": raw.get("mvp_status", ""),
+        "pricing_model": raw.get("pricing_model", ""),
+
+        # Traction / Validation
+        "users_count": raw.get("users_count", ""),
+        "repeat_usage": raw.get("repeat_usage", ""),
+        "retention_signal": raw.get("retention_signal", ""),
+        "revenue_status": raw.get("revenue_status", ""),
+        "key_feedback": raw.get("key_feedback", ""),
+
+        # Go-to-Market
+        "market_size": raw.get("market_size", ""),
+        "channels": raw.get("channels", ""),
+        "cac_ltv_estimate": raw.get("cac_ltv_estimate", ""),
+
+        # PMF 신호
+        "pmf_pull_signal": raw.get("pmf_pull_signal", ""),
+        "referral_signal": raw.get("referral_signal", ""),
+
+        # 종합 요약/제언
         "market_data": raw.get("market_data", ""),
+        "summary": raw.get("summary", ""),
         "ai_summary": raw.get("ai_summary", ""),
-        "usp": raw.get("usp", "N/A"),
+        "recommendations": raw.get("recommendations", ""),
+
+        # 다음 실행
+        "next_experiments": raw.get("next_experiments", ""),
+        "biggest_risk": raw.get("biggest_risk", ""),
     }
 
-    # PDF 생성
+    # 1) PDF 생성
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     tmp.close()
     generate_pmf_report_v2(pdf_data, tmp.name)
 
-    # 대시보드 저장 (이메일은 안 보냄)
+    # 2) 저장용 레코드(다운로드 전용, 이메일 X)
     report_record = {
         "id": uuid.uuid4().hex,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -273,42 +313,6 @@ def _generate_report_for_download(raw):
     _store_report(report_record)
 
     return score, stage, tmp.name, pdf_data["startup_name"]
-
-
-# =========================
-# 기본 라우트들
-# =========================
-@app.route("/")
-def index():
-    return "PMF Studio API is running."
-
-
-@app.route("/health", methods=["GET"])
-def health():
-    test_error = request.args.get("test_error")
-    if test_error:
-        raise ValueError("Sentry DSN 테스트 오류 발생")
-    return jsonify({"status": "ok", "message": "PMF Studio API is running"}), 200
-
-
-# =========================
-# /score : JSON 기반 점수 계산
-# =========================
-@app.route("/score", methods=["POST"])
-def score():
-    """입력 데이터 기반 PMF 점수 계산 (API 용)"""
-    ok, info = _require_valid_token_or_403(request)
-    if not ok:
-        return jsonify({"error": "token_invalid", "detail": info.get("error")}), 403
-
-    try:
-        raw = request.json or {}
-        comps = build_scores_from_raw(raw)
-        score, stage, comps_used = calculate_pmf_score(comps)
-        return jsonify({"pmf_score": score, "stage": stage, "components": comps_used})
-    except Exception as e:
-        app.logger.error(f"PMF score calculation error: {str(e)}")
-        raise
 
 
 # =========================
@@ -336,7 +340,7 @@ def report():
 POST /report?token=YOUR_TOKEN
 Content-Type: application/json
 
-{ ... PMF 입력 데이터 ... }
+{{ ... PMF 입력 데이터 ... }}
             </pre>
           </body>
         </html>
@@ -504,7 +508,7 @@ def ui_form():
         </html>
         """, token=token)
 
-    # POST: 폼 입력 처리
+    # POST: 폼 입력을 raw dict로 구성
     raw = {k: request.form.get(k) for k in request.form.keys()}
     contact_email = raw.get("contact_email")
     submit_mode = request.form.get("submit_mode") or "view"
@@ -513,7 +517,6 @@ def ui_form():
     if submit_mode == "download":
         score, stage, pdf_path, startup_name = _generate_report_for_download(raw)
 
-        # 파일을 메모리로 읽어온 뒤, 임시 파일 삭제
         pdf_io = BytesIO()
         with open(pdf_path, "rb") as f:
             pdf_io.write(f.read())
@@ -559,7 +562,6 @@ def ui_form():
     token=token,
     contact_email=contact_email,
     email_sent=email_sent)
-
 
 # =========================
 # /tokens : 토큰 관리 (JSON 로컬)
