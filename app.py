@@ -126,19 +126,58 @@ def _generate_report_and_optionally_store(raw):
     comps = build_scores_from_raw(raw)
     score, stage, comps_used = calculate_pmf_score(comps)
 
-    pdf_data = {
-        "startup_name": raw.get("startup_name", "N/A"),
-        "problem": raw.get("problem", ""),
-        "solution": raw.get("solution", ""),
-        "target": raw.get("target", ""),
-        "pmf_score": score,
-        "validation_stage": stage,
-        "recommendations": raw.get("recommendations", ""),
-        "summary": raw.get("summary", ""),
-        "market_data": raw.get("market_data", ""),
-        "ai_summary": raw.get("ai_summary", ""),
-        "usp": raw.get("usp", "N/A"),
-    }
+pdf_data = {
+    "startup_name": raw.get("startup_name", "N/A"),
+    "pmf_score": score,
+    "validation_stage": stage,
+
+    # 기본 정보
+    "contact_email": raw.get("contact_email", ""),
+    "industry": raw.get("industry", ""),
+    "startup_stage": raw.get("startup_stage", ""),
+    "team_size": raw.get("team_size", ""),
+
+    # Problem / 고객
+    "problem": raw.get("problem", ""),
+    "problem_intensity": raw.get("problem_intensity", ""),
+    "current_alternatives": raw.get("current_alternatives", ""),
+    "willingness_to_pay": raw.get("willingness_to_pay", ""),
+    "target": raw.get("target", ""),
+    "beachhead_customer": raw.get("beachhead_customer", ""),
+    "customer_access": raw.get("customer_access", ""),
+
+    # Solution / Value
+    "solution": raw.get("solution", ""),
+    "usp": raw.get("usp", ""),
+    "mvp_status": raw.get("mvp_status", ""),
+    "pricing_model": raw.get("pricing_model", ""),
+
+    # Traction / Validation
+    "users_count": raw.get("users_count", ""),
+    "repeat_usage": raw.get("repeat_usage", ""),
+    "retention_signal": raw.get("retention_signal", ""),
+    "revenue_status": raw.get("revenue_status", ""),
+    "key_feedback": raw.get("key_feedback", ""),
+
+    # Go-to-Market
+    "market_size": raw.get("market_size", ""),
+    "channels": raw.get("channels", ""),
+    "cac_ltv_estimate": raw.get("cac_ltv_estimate", ""),
+
+    # PMF 신호
+    "pmf_pull_signal": raw.get("pmf_pull_signal", ""),
+    "referral_signal": raw.get("referral_signal", ""),
+
+    # 종합 요약/제언
+    "market_data": raw.get("market_data", ""),
+    "summary": raw.get("summary", ""),
+    "ai_summary": raw.get("ai_summary", ""),
+    "recommendations": raw.get("recommendations", ""),
+
+    # 다음 실행
+    "next_experiments": raw.get("next_experiments", ""),
+    "biggest_risk": raw.get("biggest_risk", ""),
+}
 
     # 1) PDF 생성
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
