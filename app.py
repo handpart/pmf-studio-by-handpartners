@@ -10,6 +10,7 @@ from token_validation import validate_token_simple
 from pmf_score_engine import build_scores_from_raw, calculate_pmf_score
 from pdf_template_kor_v2 import generate_pmf_report_v2
 from email_reporter import send_pmf_report_email
+from pmf_ai_feedback_gemini import generate_ai_summary
 
 import sentry_sdk
 from sentry_sdk.integrations.flask import FlaskIntegration
@@ -322,32 +323,15 @@ def _store_report(report_record):
 def _generate_report_and_optionally_store(raw):
     """
     raw 입력을 받아 PMF score 계산 + PDF 생성 + 이메일 전송 + 저장까지 수행
+    + Gemini 기반 AI 요약(ai_summary) 생성
     """
-    # 1) 기본 점수 계산
     comps = build_scores_from_raw(raw)
-    score_raw, stage_raw, comps_used = calculate_pmf_score(comps)
-
-    # 2) 데이터 품질 점수 및 보정
-    quality_score = _estimate_data_quality(raw)
-    score_adj, stage_adj = _adjust_pmf_score(score_raw, stage_raw, quality_score)
-
-    # 3) OpenAI 기반 코멘트 (가능한 경우)
-    llm_quality = None
-    llm_summary = None
-    llm_recos = None
-    llm_next = None
-    llm_quality, llm_summary, llm_recos, llm_next = _llm_pmf_feedback(
-        raw, score_adj, stage_adj, quality_score
-    )
+    score, stage, comps_used = calculate_pmf_score(comps)
 
     pdf_data = {
         "startup_name": raw.get("startup_name", "N/A"),
-        "pmf_score": score_adj,
-        "validation_stage": stage_adj,
-
-        # 품질 관련 메타
-        "data_quality_score": quality_score,
-        "llm_quality_score": llm_quality,
+        "pmf_score": score,
+        "validation_stage": stage,
 
         # 기본 정보
         "contact_email": raw.get("contact_email", ""),
@@ -386,10 +370,10 @@ def _generate_report_and_optionally_store(raw):
         "pmf_pull_signal": raw.get("pmf_pull_signal", ""),
         "referral_signal": raw.get("referral_signal", ""),
 
-        # 종합 요약/제언 (사용자 입력 or LLM)
+        # 종합 요약/제언 (사용자 직접 입력값)
         "market_data": raw.get("market_data", ""),
         "summary": raw.get("summary", ""),
-        "ai_summary": raw.get("ai_summary", ""),
+        "ai_summary": raw.get("ai_summary", ""),   # 나중에 Gemini 결과로 덮어씀
         "recommendations": raw.get("recommendations", ""),
 
         # 다음 실행
@@ -397,22 +381,20 @@ def _generate_report_and_optionally_store(raw):
         "biggest_risk": raw.get("biggest_risk", ""),
     }
 
-    # LLM이 만들어준 내용이 있으면 채워 넣기
-    if llm_summary and not pdf_data["summary"]:
-        pdf_data["summary"] = llm_summary
-    if llm_recos and not pdf_data["recommendations"]:
-        pdf_data["recommendations"] = llm_recos
-    if llm_next and not pdf_data["next_experiments"]:
-        pdf_data["next_experiments"] = llm_next
-    if pdf_data["summary"] and not pdf_data["ai_summary"]:
-        pdf_data["ai_summary"] = pdf_data["summary"]
+    # ▶ 여기서 Gemini 기반 AI 요약 생성 시도
+    try:
+        ai_text = generate_ai_summary(raw, score, stage)
+        if ai_text:
+            pdf_data["ai_summary"] = ai_text
+    except Exception as e:
+        app.logger.error(f"AI summary generation error: {e}")
 
-    # 4) PDF 생성
+    # 1) PDF 생성
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     tmp.close()
     generate_pmf_report_v2(pdf_data, tmp.name)
 
-    # 5) 이메일 전송 시도
+    # 2) 이메일 전송 시도
     to_email = raw.get("contact_email") or raw.get("email")
     email_sent = False
     email_error = None
@@ -422,27 +404,27 @@ def _generate_report_and_optionally_store(raw):
                 to_email,
                 tmp.name,
                 pdf_data["startup_name"],
-                score_adj,
-                stage_adj,
+                score,
+                stage,
             )
             email_sent = True
         except Exception as e:
             email_error = str(e)
             app.logger.error(f"Email send error: {e}")
 
-    # 6) PDF 임시 파일 삭제
+    # 3) PDF 임시 파일 삭제
     try:
         os.remove(tmp.name)
     except Exception as e:
         app.logger.warning(f"Temporary file deletion failed: {e}")
 
-    # 7) 저장용 레코드 구성
+    # 4) 저장용 레코드 구성
     report_record = {
         "id": uuid.uuid4().hex,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "startup_name": pdf_data["startup_name"],
-        "pmf_score": score_adj,
-        "stage": stage_adj,
+        "pmf_score": score,
+        "stage": stage,
         "drive_link": None,  # 더 이상 사용하지 않지만 필드는 유지
         "email": to_email,
         "email_sent": email_sent,
@@ -451,9 +433,7 @@ def _generate_report_and_optionally_store(raw):
     }
     _store_report(report_record)
 
-    # 기존 인터페이스 유지: drive_link 대신 None, email_sent 추가
-    return score_adj, stage_adj, None, email_sent
-
+    return score, stage, None, email_sent
 
 # =========================
 # 리포트 생성 공통 함수 (다운로드 전용)
@@ -462,30 +442,18 @@ def _generate_report_for_download(raw):
     """
     폼 입력(raw)을 받아:
     - PMF score/stage 계산
-    - PDF 생성
+    - PDF 생성 (Gemini AI 요약 포함)
     - 대시보드용 리포트 저장
     - PDF 파일 경로와 스타트업 이름 반환
     (이메일은 보내지 않음)
     """
-    # 1) 기본 점수 계산
     comps = build_scores_from_raw(raw)
-    score_raw, stage_raw, comps_used = calculate_pmf_score(comps)
-
-    # 2) 데이터 품질 점수 및 보정
-    quality_score = _estimate_data_quality(raw)
-    score_adj, stage_adj = _adjust_pmf_score(score_raw, stage_raw, quality_score)
-
-    # 3) OpenAI 기반 코멘트 (가능한 경우)
-    llm_quality, llm_summary, llm_recos, llm_next = _llm_pmf_feedback(
-        raw, score_adj, stage_adj, quality_score
-    )
+    score, stage, comps_used = calculate_pmf_score(comps)
 
     pdf_data = {
         "startup_name": raw.get("startup_name", "N/A"),
-        "pmf_score": score_adj,
-        "validation_stage": stage_adj,
-        "data_quality_score": quality_score,
-        "llm_quality_score": llm_quality,
+        "pmf_score": score,
+        "validation_stage": stage,
 
         # 기본 정보
         "contact_email": raw.get("contact_email", ""),
@@ -535,27 +503,26 @@ def _generate_report_for_download(raw):
         "biggest_risk": raw.get("biggest_risk", ""),
     }
 
-    if llm_summary and not pdf_data["summary"]:
-        pdf_data["summary"] = llm_summary
-    if llm_recos and not pdf_data["recommendations"]:
-        pdf_data["recommendations"] = llm_recos
-    if llm_next and not pdf_data["next_experiments"]:
-        pdf_data["next_experiments"] = llm_next
-    if pdf_data["summary"] and not pdf_data["ai_summary"]:
-        pdf_data["ai_summary"] = pdf_data["summary"]
+    # ▶ Gemini AI 요약 시도
+    try:
+        ai_text = generate_ai_summary(raw, score, stage)
+        if ai_text:
+            pdf_data["ai_summary"] = ai_text
+    except Exception as e:
+        app.logger.error(f"AI summary generation error (download mode): {e}")
 
-    # 4) PDF 생성
+    # 1) PDF 생성
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     tmp.close()
     generate_pmf_report_v2(pdf_data, tmp.name)
 
-    # 5) 저장용 레코드(다운로드 전용, 이메일 X)
+    # 2) 저장용 레코드(다운로드 전용, 이메일 X)
     report_record = {
         "id": uuid.uuid4().hex,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "startup_name": pdf_data["startup_name"],
-        "pmf_score": score_adj,
-        "stage": stage_adj,
+        "pmf_score": score,
+        "stage": stage,
         "drive_link": None,
         "email": raw.get("contact_email") or raw.get("email"),
         "email_sent": False,
@@ -564,7 +531,7 @@ def _generate_report_for_download(raw):
     }
     _store_report(report_record)
 
-    return score_adj, stage_adj, tmp.name, pdf_data["startup_name"]
+    return score, stage, tmp.name, pdf_data["startup_name"]
 
 
 # =========================
