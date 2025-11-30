@@ -36,6 +36,53 @@ TITLE_FONT = "NanumGothicBold"   # 표지 큰 제목
 HEADER_FONT = "NanumGothicBold"  # 섹션 제목
 BODY_FONT = "NanumGothic"        # 본문
 
+def _build_rule_based_summary(score, stage):
+    """
+    PMF 점수 / 단계에 따라 HAND PARTNERS 스타일의 기본 코멘트 생성
+    """
+    try:
+        s = float(score)
+    except Exception:
+        # 점수 파싱이 안 되면 아주 일반적인 코멘트
+        return (
+            "현재 입력된 정보를 기반으로 PMF를 정성적으로 검토할 수 있는 초기 자료가 확보된 상태입니다. "
+            "핵심 가설(문제·고객·가치 제안)을 명확히 문서화하고, 4주 단위의 짧은 실험 사이클로 "
+            "검증–보완을 반복하는 전략을 권장드립니다."
+        )
+
+    stage = (stage or "").lower()
+
+    if s < 30:
+        return (
+            "현재 단계는 아직 PMF 이전(Early Problem Fit)에 가까운 상태로 보입니다. "
+            "고객이 정말로 겪고 있는 구체적인 Pain을 더 깊게 정의하고, "
+            "문제의 강도·빈도·대안 솔루션에 대한 정성 인터뷰를 최소 10~20건 이상 추가 확보하는 것이 중요합니다. "
+            "이 시기에는 기능 개발보다 '올바른 문제 정의와 타겟 세분화'에 대부분의 에너지를 쓰는 것이 좋습니다."
+        )
+    elif s < 50:
+        return (
+            "Problem/Solution Fit 단계에 진입한 것으로 판단됩니다. "
+            "핵심 문제와 제안하는 솔루션 사이의 논리적 연결은 보이지만, 아직 고객의 반복 사용·지불 의사 측면에서 "
+            "명확한 신호가 부족합니다. "
+            "초기 Beachhead 세그먼트를 더 좁게 정의하고, 실제 파일럿·PoC를 통해 과금 실험과 리텐션 지표를 "
+            "집중적으로 확인해보는 것을 추천드립니다."
+        )
+    elif s < 70:
+        return (
+            "초기 PMF 신호가 일부 관찰되고 있는 단계로 보입니다. "
+            "재사용·재구매, 추천, 자연 유입 등에서 긍정적인 패턴이 나타나고 있으며, "
+            "이제는 채널 별 유닛 이코노믹스(CAC/LTV)를 설계하고, 스케일업 가능성이 높은 세그먼트에 "
+            "집중하는 것이 중요합니다. "
+            "동시에 제품 사용 데이터를 기반으로 '헤비 유저의 공통점'을 분석해 보다 선명한 ICP를 정의해 보시길 권장합니다."
+        )
+    else:
+        return (
+            "PMF에 상당히 근접했거나 특정 세그먼트에서는 이미 PMF에 도달한 상태로 해석됩니다. "
+            "이 단계에서는 무리한 기능 확장보다는, 검증된 핵심 가치 제안을 중심으로 운영 효율화와 "
+            "획득 채널 확장(Performance, 파트너십, 리셀러 등)에 집중하는 전략이 효과적입니다. "
+            "동시에 고객 이탈 사유와 NPS를 정기적으로 모니터링하며, PMF 상태가 유지되는지 관리하는 것이 중요합니다."
+        )
+
 
 def _value_or_dash(v: str):
     return v if (v and str(v).strip()) else "-"
@@ -63,33 +110,33 @@ def generate_pmf_report_v2(data, output_path):
         "title_style",
         parent=styles["Heading1"],
         fontName=TITLE_FONT,
-        fontSize=24,       # 표지 타이틀 크게
-        leading=30,
+        fontSize=28,       # 표지 타이틀 크게
+        leading=34,
         alignment=1,       # center
         textColor=colors.HexColor("#1F4E79"),
-        spaceAfter=18,
+        spaceAfter=24,
     )
 
     subtitle_style = ParagraphStyle(
         "subtitle_style",
         parent=styles["Normal"],
         fontName=HEADER_FONT,
-        fontSize=12,
-        leading=16,
+        fontSize=14,
+        leading=20,
         alignment=1,
         textColor=colors.HexColor("#555555"),
-        spaceAfter=6,
+        spaceAfter=10,
     )
 
     cover_body_style = ParagraphStyle(
         "cover_body_style",
         parent=styles["Normal"],
         fontName=BODY_FONT,
-        fontSize=10,
-        leading=14,
+        fontSize=11,
+        leading=15,
         alignment=1,
         textColor=colors.HexColor("#666666"),
-        spaceAfter=12,
+        spaceAfter=14,
     )
 
     section_title_style = ParagraphStyle(
@@ -129,7 +176,7 @@ def generate_pmf_report_v2(data, output_path):
     today = datetime.date.today().strftime("%Y-%m-%d")
     startup_name = data.get("startup_name", "N/A")
 
-    elements.append(Spacer(1, 40))
+    elements.append(Spacer(1, 60))
     elements.append(Paragraph("PMF 진단 리포트", title_style))
     elements.append(Paragraph(startup_name, subtitle_style))
     elements.append(Spacer(1, 20))
@@ -257,18 +304,30 @@ def generate_pmf_report_v2(data, output_path):
     # ---------- 7. 종합 제언 및 다음 스텝 ----------
     elements.append(Paragraph("6. 종합 제언 및 다음 스텝", section_title_style))
 
+    # ---------- 7. 종합 제언 및 다음 스텝 ----------
+    elements.append(Paragraph("6. 종합 제언 및 다음 스텝", section_title_style))
+
     summary = data.get("summary", "")
     recommendations = data.get("recommendations", "")
     next_experiments = data.get("next_experiments", "")
     biggest_risk = data.get("biggest_risk", "")
 
+    # 1) 사용자가 summary/recommendations를 직접 넣은 경우 우선 사용
     if summary or recommendations:
         summary_text = summary or recommendations
     else:
-        summary_text = (
-            "입력된 종합 요약/제언이 없습니다. "
-            "향후 HAND PARTNERS 멘토링 세션을 통해 핵심 가설과 실행 전략을 함께 정리해 보시는 것을 권장합니다."
+        # 2) 비어 있으면 PMF 점수/단계를 기반으로 규칙 기반 코멘트 생성
+        summary_text = _build_rule_based_summary(
+            data.get("pmf_score"),
+            data.get("validation_stage"),
         )
+
+    section6_html = f"""
+    <b>HAND PARTNERS PMF 종합 코멘트</b><br/>{summary_text}<br/><br/>
+    <b>다음 4주 핵심 실행/실험 계획</b><br/>{_value_or_dash(next_experiments)}<br/><br/>
+    <b>가장 큰 리스크/검증해야 할 가설</b><br/>{_value_or_dash(biggest_risk)}
+    """
+    elements.append(Paragraph(section6_html, body_style))
 
     section6_html = f"""
     <b>HAND PARTNERS PMF 종합 코멘트</b><br/>{summary_text}<br/><br/>
