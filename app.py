@@ -4,7 +4,8 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, send_file
+from io import BytesIO
 from token_validation import validate_token_simple
 from pmf_score_engine import build_scores_from_raw, calculate_pmf_score
 from pdf_template_kor_v2 import generate_pmf_report_v2
@@ -185,6 +186,54 @@ def _generate_report_and_optionally_store(raw):
 
     # 기존 인터페이스 유지: drive_link 대신 None, email_sent 추가
     return score, stage, None, email_sent
+
+def _generate_report_for_download(raw):
+    """
+    폼 입력(raw)을 받아:
+    - PMF score/stage 계산
+    - PDF 생성
+    - 대시보드용 리포트 저장
+    - PDF 파일 경로와 스타트업 이름 반환
+    (이메일은 보내지 않음)
+    """
+    comps = build_scores_from_raw(raw)
+    score, stage, comps_used = calculate_pmf_score(comps)
+
+    pdf_data = {
+        "startup_name": raw.get("startup_name", "N/A"),
+        "problem": raw.get("problem", ""),
+        "solution": raw.get("solution", ""),
+        "target": raw.get("target", ""),
+        "pmf_score": score,
+        "validation_stage": stage,
+        "recommendations": raw.get("recommendations", ""),
+        "summary": raw.get("summary", ""),
+        "market_data": raw.get("market_data", ""),
+        "ai_summary": raw.get("ai_summary", ""),
+        "usp": raw.get("usp", "N/A"),
+    }
+
+    # PDF 생성
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    tmp.close()
+    generate_pmf_report_v2(pdf_data, tmp.name)
+
+    # 대시보드 저장 (이메일은 안 보냄)
+    report_record = {
+        "id": uuid.uuid4().hex,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "startup_name": pdf_data["startup_name"],
+        "pmf_score": score,
+        "stage": stage,
+        "drive_link": None,
+        "email": raw.get("contact_email") or raw.get("email"),
+        "email_sent": False,
+        "email_error": "download_only",
+        "raw": raw,
+    }
+    _store_report(report_record)
+
+    return score, stage, tmp.name, pdf_data["startup_name"]
 
 
 # =========================
@@ -401,19 +450,50 @@ def ui_form():
                 <label>가장 큰 리스크/가설</label><br/>
                 <textarea name="biggest_risk" rows="3" style="width:100%;padding:8px"></textarea><br/><br/>
 
-
-                <button type="submit" style="padding:12px 18px;font-size:16px;">
-                    PMF 리포트 생성
+                <!-- 버튼 두 개: 보기/이메일, PDF 바로 다운로드 -->
+                <button type="submit" name="submit_mode" value="view"
+                        style="padding:12px 18px;font-size:16px;margin-right:8px;">
+                    결과 화면 보기 / 이메일로 받기
                 </button>
+                <button type="submit" name="submit_mode" value="download"
+                        style="padding:12px 18px;font-size:16px;">
+                    PDF 바로 다운로드
+                </button>
+
             </form>
         </body>
         </html>
         """, token=token)
 
-    # POST: 폼 입력을 raw dict로 구성
+    # POST: 폼 입력 처리
     raw = {k: request.form.get(k) for k in request.form.keys()}
     contact_email = raw.get("contact_email")
+    submit_mode = request.form.get("submit_mode") or "view"
 
+    # 1) PDF 바로 다운로드 모드
+    if submit_mode == "download":
+        score, stage, pdf_path, startup_name = _generate_report_for_download(raw)
+
+        # 파일을 메모리로 읽어온 뒤, 임시 파일 삭제
+        pdf_io = BytesIO()
+        with open(pdf_path, "rb") as f:
+            pdf_io.write(f.read())
+        pdf_io.seek(0)
+
+        try:
+            os.remove(pdf_path)
+        except Exception as e:
+            app.logger.warning(f"Temporary file deletion failed (download): {e}")
+
+        filename = f"[PMF Studio] {startup_name or 'pmf_report'}.pdf"
+        return send_file(
+            pdf_io,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=filename,
+        )
+
+    # 2) 기본 모드: 이메일 + 화면 결과
     score, stage, drive_link, email_sent = _generate_report_and_optionally_store(raw)
 
     return render_template_string("""
@@ -427,7 +507,7 @@ def ui_form():
       {% if email_sent and contact_email %}
         <p>입력하신 이메일 주소 <b>{{contact_email}}</b> 로 PMF 리포트를 전송했습니다.</p>
       {% else %}
-        <p>이메일 발송 설정이 활성화되지 않아, 화면에만 결과를 표시합니다.</p>
+        <p>이메일 발송 설정이 활성화되지 않았거나 오류가 발생하여, 화면에만 결과를 표시합니다.</p>
       {% endif %}
 
       <hr/>
