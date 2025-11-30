@@ -14,6 +14,7 @@ from email_reporter import send_pmf_report_email
 import sentry_sdk
 from sentry_sdk.integrations.flask import FlaskIntegration
 
+
 # =========================
 # Sentry 설정 (선택사항)
 # =========================
@@ -50,6 +51,205 @@ def _require_valid_token_or_403(req):
         # info는 dict라고 가정: {"error": "...", ...}
         return False, info
     return True, info
+
+
+# =========================
+# 1) 데이터 품질 점수 & PMF 점수 보정 로직
+# =========================
+_QUALITY_FIELDS = [
+    "problem",
+    "solution",
+    "target",
+    "pmf_pull_signal",
+    "key_feedback",
+]
+
+
+def _estimate_data_quality(raw: dict) -> int:
+    """
+    각 핵심 필드 길이/내용을 보고 0~100 점으로 '답변 성의' 점수를 추정.
+    - 거의 비어 있거나, 숫자만 잔뜩 있으면 낮게.
+    - 3~5문장 정도의 자연스러운 서술이면 꽤 높게.
+    """
+    total = 0.0
+    used = 0
+
+    for field in _QUALITY_FIELDS:
+        txt = str(raw.get(field, "") or "").strip()
+        if not txt:
+            continue
+
+        used += 1
+        length = len(txt)
+        score = 0.0
+
+        # 길이 기준 (대충 감각적 기준)
+        if length >= 200:
+            score += 45
+        elif length >= 120:
+            score += 40
+        elif length >= 60:
+            score += 32
+        elif length >= 30:
+            score += 25
+        elif length >= 10:
+            score += 15
+        else:
+            score += 5
+
+        # 숫자만 잔뜩 있는 것 패널티
+        digits = sum(c.isdigit() for c in txt)
+        letters = sum(c.isalpha() for c in txt)
+        if digits > 0 and digits >= letters * 2:
+            score -= 25
+
+        # 동일 문장 반복 느낌(아주 단순)
+        unique_tokens = len(set(txt.split()))
+        total_tokens = len(txt.split())
+        if total_tokens > 0 and unique_tokens / max(total_tokens, 1) < 0.4:
+            score -= 10
+
+        total += max(score, 0.0)
+
+    if used == 0:
+        return 0
+
+    raw_score = total / used
+    return max(0, min(100, int(raw_score)))
+
+
+def _adjust_pmf_score(raw_score, raw_stage, quality_score: int):
+    """
+    데이터 품질이 낮으면 PMF 점수를 강하게 눌러서
+    엉터리 입력값에 40점 이상이 잘 안 나오도록 보정.
+    """
+    try:
+        s = float(raw_score)
+    except Exception:
+        return raw_score, raw_stage
+
+    q = max(0, min(100, int(quality_score or 0)))
+
+    # 아주 엉망 (대부분 비어있거나 숫자만)
+    if q < 20:
+        return 5.0, "정보 부족 / 진단 불가 (Pre-PMF)"
+
+    # 정보가 많이 부족
+    if q < 40:
+        # 최대 20점까지만
+        return min(s, 20.0), "정보 부족 / Early Problem Fit"
+
+    # 그럭저럭, 하지만 아주 신뢰하긴 어려움
+    if q < 60:
+        # 최대 35점 정도까지 허용
+        return min(s, 35.0), "초기 탐색 / Problem Discovery"
+
+    # 60점 이상이면, 원래 계산 점수/단계 유지
+    return s, raw_stage
+
+
+# =========================
+# 2) OpenAI 기반 요약/코멘트 생성 (선택)
+# =========================
+def _llm_pmf_feedback(raw: dict, score, stage, quality_score: int):
+    """
+    OpenAI API를 사용해서:
+    - quality_score_llm (0~100)
+    - summary (요약 코멘트)
+    - recommendations (전략 제언)
+    - next_experiments (다음 4주 실험)
+    을 JSON 으로 받아오는 함수.
+
+    OPENAI_API_KEY 가 없거나, openai 패키지가 없으면 None을 리턴하고 건너뜀.
+    """
+    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        return None, None, None, None
+
+    try:
+        from openai import OpenAI
+    except ImportError:
+        app.logger.error("openai 패키지가 설치되어 있지 않습니다. LLM 기반 피드백을 건너뜁니다.")
+        return None, None, None, None
+
+    client = OpenAI(api_key=api_key)
+
+    import textwrap
+
+    # raw 전체를 그대로 넣으면 길어질 수 있어서, 핵심 필드만 추려서 전달
+    condensed = {
+        "startup_name": raw.get("startup_name", ""),
+        "industry": raw.get("industry", ""),
+        "stage": raw.get("startup_stage", ""),
+        "problem": raw.get("problem", ""),
+        "problem_intensity": raw.get("problem_intensity", ""),
+        "solution": raw.get("solution", ""),
+        "target": raw.get("target", ""),
+        "pmf_pull_signal": raw.get("pmf_pull_signal", ""),
+        "referral_signal": raw.get("referral_signal", ""),
+        "users_count": raw.get("users_count", ""),
+        "revenue_status": raw.get("revenue_status", ""),
+        "key_feedback": raw.get("key_feedback", ""),
+        "next_experiments_user": raw.get("next_experiments", ""),
+        "biggest_risk_user": raw.get("biggest_risk", ""),
+    }
+
+    user_prompt = textwrap.dedent(f"""
+    너는 세계적인 스타트업 투자자이자 액셀러레이터 파트너다.
+    아래는 한 스타트업이 PMF 진단 폼에 작성한 핵심 내용이다.
+
+    이 정보를 바탕으로 다음 네 가지를 한국어로, 세계적인 창업 전문 멘토 톤으로 작성해라.
+    - quality_score_llm: 입력의 성의/구체성을 0~100 사이 점수로 평가 (정수)
+    - summary: PMF 관점 요약 (4~7문장, 너무 길지 않게)
+    - recommendations: 향후 3~5개월 전략 제언 (3~5문장)
+    - next_experiments: 다음 4주 동안 실행하면 좋은 실험 3~5개를 한 단락으로 정리
+
+    출력은 반드시 아래 JSON 형식 하나로만 반환해라.
+
+    {{
+      "quality_score_llm": 0~100 정수,
+      "summary": "텍스트",
+      "recommendations": "텍스트",
+      "next_experiments": "텍스트"
+    }}
+
+    --- 점수 정보 ---
+    PMF 점수(보정 전): {score}
+    PMF 단계(보정 전): {stage}
+    데이터 품질 점수(룰 기반): {quality_score}
+
+    --- 핵심 입력 데이터 ---
+    {json.dumps(condensed, ensure_ascii=False, indent=2)}
+    """)
+
+    try:
+        completion = client.chat.completions.create(
+            model=os.getenv("OPENAI_PMF_MODEL", "gpt-4.1-mini"),
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "너는 세계적인 스타트업 투자자이자 엑셀러레이터 파트너다. "
+                        "항상 솔직하지만 존중하는 톤을 유지하고, 실무적으로 도움이 되는 조언을 제공한다. "
+                        "반드시 JSON 형식만 반환해야 한다."
+                    ),
+                },
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.4,
+        )
+        content = completion.choices[0].message.content
+        obj = json.loads(content)
+
+        q_llm = obj.get("quality_score_llm")
+        summary = obj.get("summary")
+        recommendations = obj.get("recommendations")
+        next_experiments = obj.get("next_experiments")
+        return q_llm, summary, recommendations, next_experiments
+    except Exception as e:
+        app.logger.error(f"LLM PMF feedback failed: {e}")
+        return None, None, None, None
 
 
 # =========================
@@ -117,19 +317,37 @@ def _store_report(report_record):
 
 
 # =========================
-# 리포트 생성 공통 함수
+# 리포트 생성 공통 함수 (이메일 모드)
 # =========================
 def _generate_report_and_optionally_store(raw):
     """
     raw 입력을 받아 PMF score 계산 + PDF 생성 + 이메일 전송 + 저장까지 수행
     """
+    # 1) 기본 점수 계산
     comps = build_scores_from_raw(raw)
-    score, stage, comps_used = calculate_pmf_score(comps)
+    score_raw, stage_raw, comps_used = calculate_pmf_score(comps)
+
+    # 2) 데이터 품질 점수 및 보정
+    quality_score = _estimate_data_quality(raw)
+    score_adj, stage_adj = _adjust_pmf_score(score_raw, stage_raw, quality_score)
+
+    # 3) OpenAI 기반 코멘트 (가능한 경우)
+    llm_quality = None
+    llm_summary = None
+    llm_recos = None
+    llm_next = None
+    llm_quality, llm_summary, llm_recos, llm_next = _llm_pmf_feedback(
+        raw, score_adj, stage_adj, quality_score
+    )
 
     pdf_data = {
         "startup_name": raw.get("startup_name", "N/A"),
-        "pmf_score": score,
-        "validation_stage": stage,
+        "pmf_score": score_adj,
+        "validation_stage": stage_adj,
+
+        # 품질 관련 메타
+        "data_quality_score": quality_score,
+        "llm_quality_score": llm_quality,
 
         # 기본 정보
         "contact_email": raw.get("contact_email", ""),
@@ -168,7 +386,7 @@ def _generate_report_and_optionally_store(raw):
         "pmf_pull_signal": raw.get("pmf_pull_signal", ""),
         "referral_signal": raw.get("referral_signal", ""),
 
-        # 종합 요약/제언
+        # 종합 요약/제언 (사용자 입력 or LLM)
         "market_data": raw.get("market_data", ""),
         "summary": raw.get("summary", ""),
         "ai_summary": raw.get("ai_summary", ""),
@@ -179,12 +397,22 @@ def _generate_report_and_optionally_store(raw):
         "biggest_risk": raw.get("biggest_risk", ""),
     }
 
-    # 1) PDF 생성
+    # LLM이 만들어준 내용이 있으면 채워 넣기
+    if llm_summary and not pdf_data["summary"]:
+        pdf_data["summary"] = llm_summary
+    if llm_recos and not pdf_data["recommendations"]:
+        pdf_data["recommendations"] = llm_recos
+    if llm_next and not pdf_data["next_experiments"]:
+        pdf_data["next_experiments"] = llm_next
+    if pdf_data["summary"] and not pdf_data["ai_summary"]:
+        pdf_data["ai_summary"] = pdf_data["summary"]
+
+    # 4) PDF 생성
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     tmp.close()
     generate_pmf_report_v2(pdf_data, tmp.name)
 
-    # 2) 이메일 전송 시도
+    # 5) 이메일 전송 시도
     to_email = raw.get("contact_email") or raw.get("email")
     email_sent = False
     email_error = None
@@ -194,27 +422,27 @@ def _generate_report_and_optionally_store(raw):
                 to_email,
                 tmp.name,
                 pdf_data["startup_name"],
-                score,
-                stage,
+                score_adj,
+                stage_adj,
             )
             email_sent = True
         except Exception as e:
             email_error = str(e)
             app.logger.error(f"Email send error: {e}")
 
-    # 3) PDF 임시 파일 삭제
+    # 6) PDF 임시 파일 삭제
     try:
         os.remove(tmp.name)
     except Exception as e:
         app.logger.warning(f"Temporary file deletion failed: {e}")
 
-    # 4) 저장용 레코드 구성
+    # 7) 저장용 레코드 구성
     report_record = {
         "id": uuid.uuid4().hex,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "startup_name": pdf_data["startup_name"],
-        "pmf_score": score,
-        "stage": stage,
+        "pmf_score": score_adj,
+        "stage": stage_adj,
         "drive_link": None,  # 더 이상 사용하지 않지만 필드는 유지
         "email": to_email,
         "email_sent": email_sent,
@@ -224,9 +452,12 @@ def _generate_report_and_optionally_store(raw):
     _store_report(report_record)
 
     # 기존 인터페이스 유지: drive_link 대신 None, email_sent 추가
-    return score, stage, None, email_sent
+    return score_adj, stage_adj, None, email_sent
 
 
+# =========================
+# 리포트 생성 공통 함수 (다운로드 전용)
+# =========================
 def _generate_report_for_download(raw):
     """
     폼 입력(raw)을 받아:
@@ -236,13 +467,25 @@ def _generate_report_for_download(raw):
     - PDF 파일 경로와 스타트업 이름 반환
     (이메일은 보내지 않음)
     """
+    # 1) 기본 점수 계산
     comps = build_scores_from_raw(raw)
-    score, stage, comps_used = calculate_pmf_score(comps)
+    score_raw, stage_raw, comps_used = calculate_pmf_score(comps)
+
+    # 2) 데이터 품질 점수 및 보정
+    quality_score = _estimate_data_quality(raw)
+    score_adj, stage_adj = _adjust_pmf_score(score_raw, stage_raw, quality_score)
+
+    # 3) OpenAI 기반 코멘트 (가능한 경우)
+    llm_quality, llm_summary, llm_recos, llm_next = _llm_pmf_feedback(
+        raw, score_adj, stage_adj, quality_score
+    )
 
     pdf_data = {
         "startup_name": raw.get("startup_name", "N/A"),
-        "pmf_score": score,
-        "validation_stage": stage,
+        "pmf_score": score_adj,
+        "validation_stage": stage_adj,
+        "data_quality_score": quality_score,
+        "llm_quality_score": llm_quality,
 
         # 기본 정보
         "contact_email": raw.get("contact_email", ""),
@@ -292,18 +535,27 @@ def _generate_report_for_download(raw):
         "biggest_risk": raw.get("biggest_risk", ""),
     }
 
-    # 1) PDF 생성
+    if llm_summary and not pdf_data["summary"]:
+        pdf_data["summary"] = llm_summary
+    if llm_recos and not pdf_data["recommendations"]:
+        pdf_data["recommendations"] = llm_recos
+    if llm_next and not pdf_data["next_experiments"]:
+        pdf_data["next_experiments"] = llm_next
+    if pdf_data["summary"] and not pdf_data["ai_summary"]:
+        pdf_data["ai_summary"] = pdf_data["summary"]
+
+    # 4) PDF 생성
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     tmp.close()
     generate_pmf_report_v2(pdf_data, tmp.name)
 
-    # 2) 저장용 레코드(다운로드 전용, 이메일 X)
+    # 5) 저장용 레코드(다운로드 전용, 이메일 X)
     report_record = {
         "id": uuid.uuid4().hex,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "startup_name": pdf_data["startup_name"],
-        "pmf_score": score,
-        "stage": stage,
+        "pmf_score": score_adj,
+        "stage": stage_adj,
         "drive_link": None,
         "email": raw.get("contact_email") or raw.get("email"),
         "email_sent": False,
@@ -312,7 +564,7 @@ def _generate_report_for_download(raw):
     }
     _store_report(report_record)
 
-    return score, stage, tmp.name, pdf_data["startup_name"]
+    return score_adj, stage_adj, tmp.name, pdf_data["startup_name"]
 
 
 # =========================
@@ -340,7 +592,7 @@ def report():
 POST /report?token=YOUR_TOKEN
 Content-Type: application/json
 
-{{ ... PMF 입력 데이터 ... }}
+{ ... PMF 입력 데이터 ... }
             </pre>
           </body>
         </html>
@@ -363,7 +615,7 @@ Content-Type: application/json
 
 
 # =========================
-# /ui : 사용자 입력 폼 (웹 UI)
+# /ui : 사용자 입력 폼 (웹 UI) – 예시/안내 추가 버전
 # =========================
 @app.route("/ui", methods=["GET", "POST"])
 def ui_form():
@@ -385,113 +637,171 @@ def ui_form():
             <h1>PMF Studio</h1>
             <p><b>Powered by HAND PARTNERS</b> · Global Scale-up Accelerator</p>
             <hr/>
+            <p style="font-size:13px;color:#555;">
+              각 문항은 <b>3~5문장 이상</b> 성의 있게 작성해주실수록 진단과 피드백의 정확도가 높아집니다.
+              숫자나 키워드만 나열하기보다는, 실제 상황·사례·지표를 간단히 함께 적어주시면 좋습니다.
+            </p>
 
             <form method="post">
                 <input type="hidden" name="token" value="{{token}}"/>
 
                 <h3>A. 기본 정보</h3>
                 <label>리포트를 받을 이메일 주소</label><br/>
-                <input name="contact_email" type="email" style="width:100%;padding:8px"/><br/><br/>
+                <input name="contact_email" type="email"
+                       placeholder="예: founder@startup.com"
+                       style="width:100%;padding:8px"/><br/><br/>
 
                 <label>스타트업 이름</label><br/>
-                <input name="startup_name" style="width:100%;padding:8px"/><br/><br/>
+                <input name="startup_name"
+                       placeholder="예: 핸드파트너스 PMF 스튜디오"
+                       style="width:100%;padding:8px"/><br/><br/>
 
                 <label>산업/분야</label><br/>
-                <input name="industry" placeholder="예: B2B SaaS, 바이오, 커머스" style="width:100%;padding:8px"/><br/><br/>
+                <input name="industry"
+                       placeholder="예: B2B SaaS, 리테일 테크, 헬스케어, 교육, 커머스 등"
+                       style="width:100%;padding:8px"/><br/><br/>
 
                 <label>현재 단계</label><br/>
                 <select name="startup_stage" style="width:100%;padding:8px">
-                    <option value="idea">아이디어</option>
-                    <option value="mvp">MVP</option>
-                    <option value="early_revenue">초기 매출</option>
-                    <option value="scaling">스케일업</option>
+                    <option value="idea">아이디어 (문제/해결 가설만 존재)</option>
+                    <option value="mvp">MVP (초기 고객 테스트 중)</option>
+                    <option value="early_revenue">초기 매출 (소규모 유료 고객 보유)</option>
+                    <option value="scaling">스케일업 (재사용/매출 성장 중)</option>
                 </select><br/><br/>
 
                 <label>팀 규모</label><br/>
-                <input name="team_size" type="number" min="1" style="width:100%;padding:8px"/><br/><br/>
+                <input name="team_size" type="number" min="1"
+                       placeholder="예: 3"
+                       style="width:100%;padding:8px"/><br/><br/>
 
 
                 <h3>B. Problem (문제)</h3>
                 <label>핵심 문제 정의</label><br/>
-                <textarea name="problem" rows="4" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="problem" rows="4"
+                          placeholder="예: 국내 중소 제조사는 고객사 주문·생산·재고 데이터를 엑셀과 카톡으로 관리하고 있어, 실시간 재고 파악과 수요 예측이 거의 불가능합니다. 그 결과, 과잉 생산·재고 부족이 반복되고 있고 의사결정이 항상 뒤늦게 이뤄집니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <label>문제의 강도/빈도 (고객에게 얼마나 자주/크게 발생?)</label><br/>
-                <textarea name="problem_intensity" rows="3" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="problem_intensity" rows="3"
+                          placeholder="예: 월 평균 2~3회 이상 납기 지연이 발생하고 있고, 매출의 약 5~10% 수준이 재고/반품 손실로 사라진다고 응답했습니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <label>고객이 현재 쓰는 대안/경쟁 솔루션</label><br/>
-                <textarea name="current_alternatives" rows="3" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="current_alternatives" rows="3"
+                          placeholder="예: 엑셀, 카카오톡/이메일, 기본 ERP 모듈 등. 대부분 부분적으로만 사용하고 있으며, 현장에서는 여전히 수기로 보완하고 있습니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <label>고객의 지불 의사/예산 존재 여부</label><br/>
-                <textarea name="willingness_to_pay" rows="3" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="willingness_to_pay" rows="3"
+                          placeholder="예: 월 30~50만원 수준의 구독료는 충분히 지불할 의사가 있다고 응답했으며, 연 매출 100억 이상 제조사는 더 높은 예산을 고려하고 있습니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
 
                 <h3>C. Target Customer (고객)</h3>
                 <label>핵심 타겟 고객 세그먼트</label><br/>
-                <textarea name="target" rows="3" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="target" rows="3"
+                          placeholder="예: 연 매출 50~300억 규모의 국내 중소 제조사 중, OEM/ODM 수주 비중이 높은 기업을 1차 타겟으로 삼고 있습니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <label>가장 먼저 공략할 Beachhead 고객</label><br/>
-                <textarea name="beachhead_customer" rows="2" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="beachhead_customer" rows="2"
+                          placeholder="예: 수도권 지역의 전자/부품 제조사 20곳을 1차 Beachhead로 설정했습니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <label>고객에 접근/확보할 수 있는 이유와 방법</label><br/>
-                <textarea name="customer_access" rows="3" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="customer_access" rows="3"
+                          placeholder="예: 기존 컨설팅 네트워크, 산업별 협회, ERP 파트너사와의 제휴를 통해 결정권자와 직접 미팅을 만들 수 있습니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
 
                 <h3>D. Solution / Value (해결책/가치)</h3>
                 <label>제품/솔루션 요약</label><br/>
-                <textarea name="solution" rows="4" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="solution" rows="4"
+                          placeholder="예: 주문·생산·재고 데이터를 한 화면에서 통합 관리하고, 간단한 입력만으로 생산 계획과 안전 재고를 추천해 주는 웹 기반 SaaS 입니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <label>USP (차별 포인트)</label><br/>
-                <textarea name="usp" rows="3" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="usp" rows="3"
+                          placeholder="예: 국내 중소 제조사에 특화된 템플릿과 KPI, 도입 후 2주 내 온보딩, 현장 작업자도 모바일에서 쉽게 사용할 수 있는 UX를 강점으로 합니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <label>MVP/제품 상태</label><br/>
-                <textarea name="mvp_status" rows="2" placeholder="예: 베타 출시, 기능 3개 완료" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="mvp_status" rows="2"
+                          placeholder="예: 알파 버전은 3개 고객사에 PoC로 설치되어 있고, 핵심 기능 3개(주문 관리, 생산 일정, 재고 알림)가 동작 중입니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <label>가격/수익모델</label><br/>
-                <textarea name="pricing_model" rows="2" placeholder="예: 월 구독, 거래수수료, 라이선스" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="pricing_model" rows="2"
+                          placeholder="예: 공장 수 기준 월 구독(기본 30만원) + 필요 시 온보딩 컨설팅 패키지 과금 모델을 고려하고 있습니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
 
                 <h3>E. Traction / Validation (검증/성과)</h3>
                 <label>현재 사용자 수</label><br/>
-                <input name="users_count" style="width:100%;padding:8px"/><br/><br/>
+                <input name="users_count"
+                       placeholder="예: PoC 3곳 / 유료 고객 1곳 / 월간 활성 사용자 40명 수준"
+                       style="width:100%;padding:8px"/><br/><br/>
 
                 <label>활성 사용자 / 재사용률 신호</label><br/>
-                <textarea name="repeat_usage" rows="2" placeholder="예: 주간 재사용 40%, 반복 구매 발생" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="repeat_usage" rows="2"
+                          placeholder="예: 메인 기능의 주간 재사용률이 60% 수준이며, 주요 담당자는 하루에 3~4번 로그인합니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <label>리텐션/이탈 관련 신호</label><br/>
-                <textarea name="retention_signal" rows="2" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="retention_signal" rows="2"
+                          placeholder="예: PoC 고객 중 1곳은 6개월째 꾸준히 사용 중이고, 기능 보완을 요청하고 있습니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <label>매출/유료 전환 현황</label><br/>
-                <textarea name="revenue_status" rows="2" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="revenue_status" rows="2"
+                          placeholder="예: PoC 3곳 중 1곳이 유료로 전환하여 월 50만원을 지불하고 있습니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <label>고객 피드백 핵심 요약</label><br/>
-                <textarea name="key_feedback" rows="3" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="key_feedback" rows="3"
+                          placeholder="예: '이전보다 재고 관련 회의 시간이 절반으로 줄었다', '납기 지연 리스크를 미리 볼 수 있어 좋다' 등 정성 피드백이 있습니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
 
                 <h3>F. Go-to-Market (시장/확장)</h3>
                 <label>시장 크기/기회</label><br/>
-                <textarea name="market_size" rows="2" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="market_size" rows="2"
+                          placeholder="예: 국내 중소 제조사 대상 TAM을 연 매출 1조~2조 수준으로 추정하고 있습니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <label>주요 유입/세일즈 채널</label><br/>
-                <textarea name="channels" rows="2" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="channels" rows="2"
+                          placeholder="예: 산업별 전시회, 협회 세미나, 기존 컨설팅 고객사 레퍼런스를 주요 채널로 사용합니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <label>CAC/LTV 추정치(대략)</label><br/>
-                <textarea name="cac_ltv_estimate" rows="2" placeholder="예: CAC 3만원, LTV 30만원" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="cac_ltv_estimate" rows="2"
+                          placeholder="예: 현재 PoC 기준 CAC는 약 30만원, 예상 LTV는 36개월 기준 500~700만원 수준으로 가정합니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
 
                 <h3>G. PMF 신호</h3>
                 <label>PMF Pull Signal (없으면 큰일 나는 반응/사례)</label><br/>
-                <textarea name="pmf_pull_signal" rows="3" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="pmf_pull_signal" rows="3"
+                          placeholder="예: 한 고객사는 '이제 이 툴이 없으면 다시 엑셀로 돌아갈 수 없다'고 말하며, 기능 장애 발생 시 바로 연락을 줍니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <label>추천/바이럴 신호</label><br/>
-                <textarea name="referral_signal" rows="2" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="referral_signal" rows="2"
+                          placeholder="예: 기존 고객이 같은 협회 회원사 2곳을 소개해 주었고, 현재 미팅을 진행 중입니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
 
                 <h3>H. 다음 실행</h3>
                 <label>다음 4주 핵심 실험/액션</label><br/>
-                <textarea name="next_experiments" rows="3" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="next_experiments" rows="3"
+                          placeholder="예: (1) 기존 PoC 3곳의 유료 전환 조건 정리 (2) 전시회 리드 20곳 대상 데모 세션 진행 (3) 핵심 리텐션 기능 정의 및 사용 데이터 분석"
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <label>가장 큰 리스크/가설</label><br/>
-                <textarea name="biggest_risk" rows="3" style="width:100%;padding:8px"></textarea><br/><br/>
+                <textarea name="biggest_risk" rows="3"
+                          placeholder="예: 실제로는 ERP 벤더가 동일한 문제를 더 싸게 해결해 줄 수 있다는 리스크, 현장 작업자의 사용 저항이 크다는 리스크 등이 있습니다."
+                          style="width:100%;padding:8px"></textarea><br/><br/>
 
                 <!-- 버튼 두 개: 보기/이메일, PDF 바로 다운로드 -->
                 <button type="submit" name="submit_mode" value="view"
@@ -562,6 +872,7 @@ def ui_form():
     token=token,
     contact_email=contact_email,
     email_sent=email_sent)
+
 
 # =========================
 # /tokens : 토큰 관리 (JSON 로컬)
