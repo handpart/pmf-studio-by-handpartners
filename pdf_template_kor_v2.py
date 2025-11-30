@@ -4,12 +4,7 @@ import datetime
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    PageBreak,
-)
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -17,56 +12,39 @@ from reportlab.pdfbase.ttfonts import TTFont
 
 # ---------------------------
 # 폰트 설정
-#   - 프로젝트 루트 기준으로 fonts/ 폴더에
-#     - NanumGothic.ttf
-#     - NanumGothicBold.ttf
-#     - NotoSansKR-Bold.otf (또는 ttf)
-#   를 넣어두고 사용하는 구조
+#   - fonts/ 폴더 안에
+#     NanumGothic.ttf
+#     NanumGothicBold.ttf
+#   를 넣어서 사용
 # ---------------------------
 BASE_DIR = os.path.dirname(__file__)
 FONT_DIR = os.path.join(BASE_DIR, "fonts")
 
-def _register_fonts():
-    body_font = "Helvetica"
-    header_font = "Helvetica-Bold"
-    title_font = "Helvetica-Bold"
+NANUM_REG = os.path.join(FONT_DIR, "NanumGothic.ttf")
+NANUM_BOLD = os.path.join(FONT_DIR, "NanumGothicBold.ttf")
 
-    try:
-        nanum_regular = os.path.join(FONT_DIR, "NanumGothic.ttf")
-        nanum_bold = os.path.join(FONT_DIR, "NanumGothicBold.ttf")
-        noto_bold = os.path.join(FONT_DIR, "NotoSansKR-Bold.otf")
+if not os.path.exists(NANUM_REG) or not os.path.exists(NANUM_BOLD):
+    raise FileNotFoundError(
+        "fonts 폴더에 NanumGothic.ttf / NanumGothicBold.ttf 파일이 있는지 확인해 주세요.\n"
+        f"기대 경로: {NANUM_REG}, {NANUM_BOLD}"
+    )
 
-        if os.path.exists(nanum_regular):
-            pdfmetrics.registerFont(TTFont("NanumGothic", nanum_regular))
-            body_font = "NanumGothic"
+pdfmetrics.registerFont(TTFont("NanumGothic", NANUM_REG))
+pdfmetrics.registerFont(TTFont("NanumGothicBold", NANUM_BOLD))
 
-        if os.path.exists(nanum_bold):
-            pdfmetrics.registerFont(TTFont("NanumGothicBold", nanum_bold))
-            header_font = "NanumGothicBold"
-
-        if os.path.exists(noto_bold):
-            pdfmetrics.registerFont(TTFont("NotoSansKR-Bold", noto_bold))
-            title_font = "NotoSansKR-Bold"
-        else:
-            # 제목도 나눔볼드로 대체
-            title_font = header_font or body_font
-
-    except Exception:
-        # 폰트 등록 실패 시 기본 폰트
-        body_font = "Helvetica"
-        header_font = "Helvetica-Bold"
-        title_font = "Helvetica-Bold"
-
-    return title_font, header_font, body_font
+TITLE_FONT = "NanumGothicBold"   # 표지 큰 제목
+HEADER_FONT = "NanumGothicBold"  # 섹션 제목
+BODY_FONT = "NanumGothic"        # 본문
 
 
-TITLE_FONT, HEADER_FONT, BODY_FONT = _register_fonts()
+def _value_or_dash(v: str):
+    return v if (v and str(v).strip()) else "-"
 
 
 def generate_pmf_report_v2(data, output_path):
     """
     PMF 리포트 PDF 생성
-    data: app.py에서 구성한 pdf_data 딕셔너리
+    data: app.py에서 전달한 pdf_data 딕셔너리
     """
     doc = SimpleDocTemplate(
         output_path,
@@ -76,19 +54,18 @@ def generate_pmf_report_v2(data, output_path):
         topMargin=20 * mm,
         bottomMargin=18 * mm,
     )
+
     elements = []
     styles = getSampleStyleSheet()
 
-    # ---------------------------
-    # 스타일 정의
-    # ---------------------------
+    # ---------- 스타일 ----------
     title_style = ParagraphStyle(
         "title_style",
         parent=styles["Heading1"],
         fontName=TITLE_FONT,
-        fontSize=24,
+        fontSize=24,       # 표지 타이틀 크게
         leading=30,
-        alignment=1,  # center
+        alignment=1,       # center
         textColor=colors.HexColor("#1F4E79"),
         spaceAfter=18,
     )
@@ -119,7 +96,7 @@ def generate_pmf_report_v2(data, output_path):
         "section_title_style",
         parent=styles["Heading2"],
         fontName=HEADER_FONT,
-        fontSize=13,
+        fontSize=13,      # 섹션 제목은 본문보다 크게
         leading=18,
         textColor=colors.white,
         backColor=colors.HexColor("#2D89EF"),
@@ -134,7 +111,7 @@ def generate_pmf_report_v2(data, output_path):
         "body_style",
         parent=styles["Normal"],
         fontName=BODY_FONT,
-        fontSize=10,
+        fontSize=10,      # 본문: 가독성 좋은 크기
         leading=14,
         textColor=colors.HexColor("#222222"),
     )
@@ -148,9 +125,7 @@ def generate_pmf_report_v2(data, output_path):
         textColor=colors.HexColor("#777777"),
     )
 
-    # ---------------------------
-    # 1. 표지
-    # ---------------------------
+    # ---------- 1. 표지 ----------
     today = datetime.date.today().strftime("%Y-%m-%d")
     startup_name = data.get("startup_name", "N/A")
 
@@ -176,13 +151,7 @@ def generate_pmf_report_v2(data, output_path):
     elements.append(Paragraph(intro_text, cover_body_style))
     elements.append(PageBreak())
 
-    # 공통 헬퍼
-    def _value_or_dash(v: str):
-        return v if (v and str(v).strip()) else "-"
-
-    # ---------------------------
-    # 2. 스타트업 개요
-    # ---------------------------
+    # ---------- 2. 스타트업 개요 ----------
     elements.append(Paragraph("1. 스타트업 개요", section_title_style))
 
     pmf_score = data.get("pmf_score", "N/A")
@@ -204,9 +173,7 @@ def generate_pmf_report_v2(data, output_path):
     elements.append(Paragraph(overview_html, body_style))
     elements.append(Spacer(1, 8))
 
-    # ---------------------------
-    # 3. 문제 정의 및 고객 페르소나
-    # ---------------------------
+    # ---------- 3. 문제 정의 및 고객 ----------
     elements.append(Paragraph("2. 문제 정의 및 고객 페르소나", section_title_style))
 
     problem = data.get("problem", "")
@@ -229,9 +196,7 @@ def generate_pmf_report_v2(data, output_path):
     elements.append(Paragraph(section2_html, body_style))
     elements.append(Spacer(1, 10))
 
-    # ---------------------------
-    # 4. 솔루션 및 가치 제안
-    # ---------------------------
+    # ---------- 4. 솔루션 및 가치 제안 ----------
     elements.append(Paragraph("3. 솔루션 및 가치 제안", section_title_style))
 
     solution = data.get("solution", "")
@@ -248,9 +213,7 @@ def generate_pmf_report_v2(data, output_path):
     elements.append(Paragraph(section3_html, body_style))
     elements.append(Spacer(1, 10))
 
-    # ---------------------------
-    # 5. 시장 검증 및 Traction
-    # ---------------------------
+    # ---------- 5. 시장 검증 및 Traction ----------
     elements.append(Paragraph("4. 시장 검증 및 Traction", section_title_style))
 
     market_size = data.get("market_size", "") or data.get("market_data", "")
@@ -274,9 +237,7 @@ def generate_pmf_report_v2(data, output_path):
     elements.append(Paragraph(section4_html, body_style))
     elements.append(Spacer(1, 10))
 
-    # ---------------------------
-    # 6. Go-to-Market 및 PMF 신호
-    # ---------------------------
+    # ---------- 6. Go-to-Market 및 PMF 신호 ----------
     elements.append(Paragraph("5. Go-to-Market 및 PMF 신호", section_title_style))
 
     channels = data.get("channels", "")
@@ -293,9 +254,7 @@ def generate_pmf_report_v2(data, output_path):
     elements.append(Paragraph(section5_html, body_style))
     elements.append(Spacer(1, 10))
 
-    # ---------------------------
-    # 7. 종합 제언 및 다음 스텝
-    # ---------------------------
+    # ---------- 7. 종합 제언 및 다음 스텝 ----------
     elements.append(Paragraph("6. 종합 제언 및 다음 스텝", section_title_style))
 
     summary = data.get("summary", "")
@@ -318,19 +277,13 @@ def generate_pmf_report_v2(data, output_path):
     """
     elements.append(Paragraph(section6_html, body_style))
 
-    # ---------------------------
-    # 푸터
-    # ---------------------------
+    # ---------- 푸터 ----------
     def footer(canvas, doc_):
         canvas.saveState()
-        canvas.setFont(BODY_FONT if BODY_FONT != "Helvetica" else "Helvetica", 8)
+        canvas.setFont(BODY_FONT, 8)
         canvas.setFillColor(colors.HexColor("#2D89EF"))
         canvas.drawString(20 * mm, 10 * mm, "Global Scale-up Accelerator, HAND Partners")
-        canvas.drawRightString(
-            A4[0] - 20 * mm,
-            10 * mm,
-            f"Page {doc_.page}",
-        )
+        canvas.drawRightString(A4[0] - 20 * mm, 10 * mm, f"Page {doc_.page}")
         canvas.restoreState()
 
     doc.build(elements, onFirstPage=footer, onLaterPages=footer)
