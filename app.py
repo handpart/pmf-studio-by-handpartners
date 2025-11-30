@@ -328,6 +328,9 @@ def _generate_report_and_optionally_store(raw):
     comps = build_scores_from_raw(raw)
     score, stage, comps_used = calculate_pmf_score(comps)
 
+    # Gemini 기반 AI 요약 생성
+    ai_summary = generate_ai_summary(raw, score, stage)
+
     pdf_data = {
         "startup_name": raw.get("startup_name", "N/A"),
         "pmf_score": score,
@@ -371,10 +374,10 @@ def _generate_report_and_optionally_store(raw):
         "pmf_pull_signal": raw.get("pmf_pull_signal", ""),
         "referral_signal": raw.get("referral_signal", ""),
 
-        # 종합 요약/제언 (사용자 직접 입력값)
+        # 종합 요약/제언
         "market_data": raw.get("market_data", ""),
         "summary": raw.get("summary", ""),
-        "ai_summary": raw.get("ai_summary", ""),   # 나중에 Gemini 결과로 덮어씀
+        "ai_summary": ai_summary,  # ← 여기서 실제 AI 요약 사용
         "recommendations": raw.get("recommendations", ""),
 
         # 다음 실행
@@ -451,6 +454,8 @@ def _generate_report_for_download(raw):
     comps = build_scores_from_raw(raw)
     score, stage, comps_used = calculate_pmf_score(comps)
 
+    ai_summary = generate_ai_summary(raw, score, stage)
+
     pdf_data = {
         "startup_name": raw.get("startup_name", "N/A"),
         "pmf_score": score,
@@ -497,7 +502,7 @@ def _generate_report_for_download(raw):
         # 종합 요약/제언
         "market_data": raw.get("market_data", ""),
         "summary": raw.get("summary", ""),
-        "ai_summary": raw.get("ai_summary", ""),
+        "ai_summary": ai_summary,
         "recommendations": raw.get("recommendations", ""),
 
         # 다음 실행

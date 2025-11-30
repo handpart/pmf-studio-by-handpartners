@@ -1,5 +1,4 @@
 # pmf_ai_feedback_gemini.py
-
 import os
 import re
 from textwrap import dedent
@@ -12,7 +11,7 @@ except ImportError:
 
 # 어떤 필드를 보고 "성실하게 썼는지" 평가할지 기준
 KEY_FIELDS = [
-    "industry", "business_item",  # ← 추가
+    "industry", "business_item",
     "problem", "problem_intensity", "current_alternatives", "willingness_to_pay",
     "target", "beachhead_customer", "customer_access",
     "solution", "usp", "mvp_status", "pricing_model",
@@ -66,61 +65,61 @@ def _build_prompt(raw: dict, score, stage: str, quality_score: float) -> str:
     Gemini에게 넘길 프롬프트 생성.
     HAND PARTNERS의 PMF Studio 멘토가 쓴 것 같은 톤으로 요청.
     """
-    def g(key):
+    def g(key: str) -> str:
         return (raw.get(key) or "").strip()
 
-    return dedent(f"""
-    당신은 HAND PARTNERS의 파트너이자 세계적인 초기 스타트업 투자자입니다.
-    지금부터 한 스타트업의 PMF 진단 결과와 설문 응답을 요약해서,
-    창업자가 실제로 액션을 취할 수 있는 피드백을 한국어로 작성해 주세요.
+    prompt = f"""
+당신은 HAND PARTNERS의 파트너이자 세계적인 초기 스타트업 투자자입니다.
+지금부터 한 스타트업의 PMF 진단 결과와 설문 응답을 요약해서,
+창업자가 실제로 액션을 취할 수 있는 피드백을 한국어로 작성해 주세요.
 
-    --- 시스템 정보 ---
-    - 프로그램: PMF Studio by HAND PARTNERS
-    - PMF 점수: {score}
-    - PMF 단계: {stage}
-    - 응답 성실도(내부 추정 지표, 0~1): {quality_score:.2f}
+--- 시스템 정보 ---
+- 프로그램: PMF Studio by HAND PARTNERS
+- PMF 점수: {score}
+- PMF 단계: {stage}
+- 응답 성실도(내부 추정 지표, 0~1): {quality_score:.2f}
 
-    --- 스타트업 개요 ---
-    - 스타트업 이름: {g("startup_name")}
-    - 산업/분야: {g("industry")}
-    - 사업 아이템 소개: {g("business_item")
-    - 현재 단계: {g("startup_stage")}
-    - 팀 규모: {g("team_size")}
+--- 스타트업 개요 ---
+- 스타트업 이름: {g("startup_name")}
+- 산업/분야: {g("industry")}
+- 사업 아이템 소개: {g("business_item")}
+- 현재 단계: {g("startup_stage")}
+- 팀 규모: {g("team_size")}
 
-    --- Problem / 고객 ---
-    - 핵심 문제 정의: {g("problem")}
-    - 문제의 강도/빈도: {g("problem_intensity")}
-    - 현재 고객의 대안/경쟁 솔루션: {g("current_alternatives")}
-    - 고객의 지불 의사/예산: {g("willingness_to_pay")}
-    - 타겟 고객 세그먼트: {g("target")}
-    - Beachhead 고객: {g("beachhead_customer")}
-    - 고객 접근/확보 방법: {g("customer_access")}
+--- Problem / 고객 ---
+- 핵심 문제 정의: {g("problem")}
+- 문제의 강도/빈도: {g("problem_intensity")}
+- 현재 고객의 대안/경쟁 솔루션: {g("current_alternatives")}
+- 고객의 지불 의사/예산: {g("willingness_to_pay")}
+- 타겟 고객 세그먼트: {g("target")}
+- Beachhead 고객: {g("beachhead_customer")}
+- 고객 접근/확보 방법: {g("customer_access")}
 
-    --- Solution / Value ---
-    - 솔루션 요약: {g("solution")}
-    - USP (차별점): {g("usp")}
-    - MVP/제품 상태: {g("mvp_status")}
-    - 가격/수익모델: {g("pricing_model")}
+--- Solution / Value ---
+- 솔루션 요약: {g("solution")}
+- USP (차별점): {g("usp")}
+- MVP/제품 상태: {g("mvp_status")}
+- 가격/수익모델: {g("pricing_model")}
 
-    --- Traction / Validation ---
-    - 사용자 수: {g("users_count")}
-    - 재사용/활성 사용자 신호: {g("repeat_usage")}
-    - 리텐션/이탈 신호: {g("retention_signal")}
-    - 매출/유료 전환: {g("revenue_status")}
-    - 핵심 고객 피드백: {g("key_feedback")}
+--- Traction / Validation ---
+- 사용자 수: {g("users_count")}
+- 재사용/활성 사용자 신호: {g("repeat_usage")}
+- 리텐션/이탈 신호: {g("retention_signal")}
+- 매출/유료 전환: {g("revenue_status")}
+- 핵심 고객 피드백: {g("key_feedback")}
 
-    --- Go-to-Market & PMF 신호 ---
-    - 시장/기회: {g("market_size")}
-    - 주요 유입/세일즈 채널: {g("channels")}
-    - CAC/LTV 추정: {g("cac_ltv_estimate")}
-    - PMF Pull Signal: {g("pmf_pull_signal")}
-    - 추천/바이럴 신호: {g("referral_signal")}
+--- Go-to-Market & PMF 신호 ---
+- 시장/기회: {g("market_size")}
+- 주요 유입/세일즈 채널: {g("channels")}
+- CAC/LTV 추정: {g("cac_ltv_estimate")}
+- PMF Pull Signal: {g("pmf_pull_signal")}
+- 추천/바이럴 신호: {g("referral_signal")}
 
-    --- 다음 실행 ---
-    - 다음 4주 핵심 실험/액션: {g("next_experiments")}
-    - 가장 큰 리스크/가설: {g("biggest_risk")}
+--- 다음 실행 ---
+- 다음 4주 핵심 실험/액션: {g("next_experiments")}
+- 가장 큰 리스크/가설: {g("biggest_risk")}
 
-    --- 작성 방식 가이드 ---
+--- 작성 방식 가이드 ---
     1. 한국어로 A4용지 4장 정도 분량의 내용으로 작성해 주세요.
     2. 구조는 다음 네 부분을 나눠서 작성해주세요:
        (1) 사업 아이템 소개를 분석하여 이에 속하는 산업/분야에 대한 현황 요약
@@ -130,12 +129,13 @@ def _build_prompt(raw: dict, score, stage: str, quality_score: float) -> str:
     3. 응답이 숫자 위주이거나 정보가 부족해 보이면,
        그 사실을 먼저 지적하고 어떤 항목을 더 구체적으로 써야 하는지 짧게 안내해 주세요.
     4. 너무 포장하지 말고, 초기 단계 스타트업을 멘토링하는 투자자의 현실적인 톤을 유지해 주세요.
-    """)
+"""
+    return dedent(prompt)
 
 
 def generate_ai_summary(raw: dict, score, stage: str) -> str:
     """
-    Gemeni API를 호출해 HAND PARTNERS 스타일의 PMF 인사이트 요약을 생성.
+    Gemini API를 호출해 HAND PARTNERS 스타일의 PMF 인사이트 요약을 생성.
     - 환경 변수 GEMINI_API_KEY가 없거나 라이브러리가 없으면 "" 반환
     - 입력이 너무 부실하면 사람이 다시 쓰도록 유도하는 메시지 반환
     """
