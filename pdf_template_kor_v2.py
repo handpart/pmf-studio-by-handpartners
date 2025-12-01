@@ -317,27 +317,37 @@ def generate_pmf_report_v2(data, output_path):
     # ---------- 2. 스타트업 개요 ----------
     elements.append(Paragraph("1. 스타트업 개요", section_title_style))
 
-    pmf_score = data.get("pmf_score", "N/A")
-    validation_stage = data.get("validation_stage", "N/A")
-    industry = data.get("industry", "")
-    stage_label = data.get("startup_stage", "")
-    team_size = data.get("team_size", "")
-    contact_email = data.get("contact_email", "")
-    business_item = data.get("business_item", "")  # ← 이 줄 추가
+    # PMF 점수 표시용 문자열 구성
+    if pmf_score is None:
+        pmf_score_line = "점수 산출 불가 (데이터 부족)"
+    else:
+        if pmf_score_mode == "reference":
+            pmf_score_line = f"{pmf_score}점 (참고용)"
+        else:
+            pmf_score_line = f"{pmf_score}점"
+
+    if data_quality_score is not None and data_quality_label:
+        quality_line = f"{data_quality_label} (Data Quality Score: {data_quality_score}/100)"
+    else:
+        quality_line = "-"
 
     overview_html = f"""
     <b>• 스타트업명:</b> {startup_name}<br/>
-    <b>• PMF 점수:</b> {pmf_score}<br/>
+    <b>• PMF 점수:</b> {pmf_score_line}<br/>
     <b>• PMF 단계:</b> {validation_stage}<br/>
+    <b>• 입력 데이터 신뢰도:</b> {quality_line}<br/>
     <b>• 현재 단계(창업 단계):</b> {_value_or_dash(stage_label)}<br/>
     <b>• 산업/분야:</b> {_value_or_dash(industry)}<br/>
     <b>• 사업 아이템 소개:</b> {_value_or_dash(business_item)}<br/>
     <b>• 팀 규모:</b> {_value_or_dash(team_size)}<br/>
-    <b>• 리포트 수신 이메일:</b> {_value_or_dash(contact_email)}<br/>
-    <b>• 입력 데이터 신뢰도:</b> {quality_label} (Data Quality Score: {quality_score}/100)
+    <b>• 리포트 수신 이메일:</b> {_value_or_dash(contact_email)}
     """
     elements.append(Paragraph(overview_html, body_style))
     elements.append(Spacer(1, 8))
+
+    if pmf_score_note:
+        elements.append(Paragraph(pmf_score_note, small_style))
+        elements.append(Spacer(1, 6))
 
     # ---------- 3. 문제 정의 및 고객 ----------
     elements.append(Paragraph("2. 문제 정의 및 고객 페르소나", section_title_style))
@@ -420,7 +430,7 @@ def generate_pmf_report_v2(data, output_path):
     elements.append(Paragraph(section5_html, body_style))
     elements.append(Spacer(1, 10))
 
-    # ---------- 7. 종합 제언 및 다음 스텝 (한 번만!) ----------
+    # ---------- 7. 종합 제언 및 다음 스텝 ----------
     elements.append(Paragraph("6. 종합 제언 및 다음 스텝", section_title_style))
 
     summary = data.get("summary", "")
@@ -432,11 +442,10 @@ def generate_pmf_report_v2(data, output_path):
     if summary or recommendations:
         summary_text = summary or recommendations
     else:
-        # 2) 비어 있으면 PMF 점수/단계 + 데이터 품질 기반 코멘트 생성
+        # 2) 비어 있으면 PMF 점수/단계를 기반으로 규칙 기반 코멘트 생성
         summary_text = _build_rule_based_summary(
-            data.get("pmf_score"),
-            data.get("validation_stage"),
-            quality_score,
+            data.get("pmf_score_raw"),
+            data.get("validation_stage_raw"),
         )
 
     section6_html = f"""

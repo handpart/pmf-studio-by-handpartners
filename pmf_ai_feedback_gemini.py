@@ -25,7 +25,7 @@ KEY_FIELDS = [
 DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 
-def _estimate_answer_quality(raw: dict) -> float:
+def _estimate_answer_quality_internal(raw: dict) -> float:
     """
     답변의 '성실도'를 0.0 ~ 1.0 사이 점수로 대략 계산.
     - 텍스트 길이가 너무 짧으면 낮게
@@ -58,6 +58,33 @@ def _estimate_answer_quality(raw: dict) -> float:
 
     score = max(0.0, base - penalty)
     return score
+
+
+def estimate_answer_quality(raw: dict) -> dict:
+    """
+    app.py, PDF에서 함께 쓸 수 있도록
+    - 0~1 비율
+    - 0~100 점수
+    - 라벨(매우 낮음/낮음/보통/높음)
+    을 함께 반환.
+    """
+    ratio = _estimate_answer_quality_internal(raw)
+    score_100 = int(round(ratio * 100))
+
+    if ratio < 0.25:
+        label = "매우 낮음"
+    elif ratio < 0.5:
+        label = "낮음"
+    elif ratio < 0.75:
+        label = "보통"
+    else:
+        label = "높음"
+
+    return {
+        "quality_ratio": ratio,
+        "quality_score": score_100,
+        "quality_label": label,
+    }
 
 
 def _build_prompt(raw: dict, score, stage: str, quality_score: float) -> str:
@@ -141,10 +168,11 @@ def generate_ai_summary(raw: dict, score, stage: str) -> str:
     """
     api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
     if not api_key or genai is None:
-        # 설정 안 되어 있으면 그냥 빈 문자열 -> 기존 룰 기반/기본 문구 사용
+        # 설정 안 되어 있으면 그냥 빈 문자열 -> PDF에서는 기본 룰 기반 문구만 사용
         return ""
 
-    quality = _estimate_answer_quality(raw)
+    qinfo = estimate_answer_quality(raw)
+    quality = qinfo["quality_ratio"]
 
     # 응답이 너무 부실한 경우: 굳이 API 호출 안 하고 안내 문구만
     if quality < 0.25:
