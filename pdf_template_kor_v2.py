@@ -276,13 +276,29 @@ def generate_pmf_report_v2(data, output_path):
         textColor=colors.HexColor("#777777"),
     )
 
+    # ---------- 여기서부터 "점수/품질/기본 정보"를 한 번에 정의 ----------
+    pmf_score = data.get("pmf_score", None)
+    pmf_score_raw = data.get("pmf_score_raw", pmf_score)
+    pmf_score_mode = data.get("pmf_score_mode", "normal")
+    pmf_score_note = data.get("pmf_score_note", "")
+    validation_stage = data.get("validation_stage", "N/A")
+
+    data_quality_score = data.get("data_quality_score", None)
+    data_quality_label = data.get("data_quality_label", None)
+
+    startup_name = data.get("startup_name", "N/A")
+    industry = data.get("industry", "")
+    business_item = data.get("business_item", "")
+    stage_label = data.get("startup_stage", "")
+    team_size = data.get("team_size", "")
+    contact_email = data.get("contact_email", "")
+
     # ---------- 0. 데이터 품질 계산 ----------
     quality_score = _estimate_data_quality(data)
     quality_label = _quality_label(quality_score)
 
     # ---------- 1. 표지 ----------
     today = datetime.date.today().strftime("%Y-%m-%d")
-    startup_name = data.get("startup_name", "N/A")
 
     elements.append(Spacer(1, 60))
     elements.append(Paragraph("PMF 진단 리포트", title_style))
@@ -295,7 +311,7 @@ def generate_pmf_report_v2(data, output_path):
     )
     elements.append(Paragraph(cover_subtitle, cover_body_style))
     elements.append(Paragraph(today, small_style))
-    elements.append(Spacer(1, 20))
+    elements.append(Spacer(1, 30))
 
     intro_text = (
         "이 리포트는 HAND PARTNERS의 PMF Studio를 통해 수집된 정보를 바탕으로, "
@@ -304,14 +320,6 @@ def generate_pmf_report_v2(data, output_path):
         "다음 단계 실행을 위한 실질적인 논의 기반으로 활용할 수 있습니다."
     )
     elements.append(Paragraph(intro_text, cover_body_style))
-
-    note_text = (
-        "※ 각 문항을 성실하게, 실제 사례와 함께 2~3문장 이상 작성해 주실수록 "
-        "데이터 품질 점수가 높아지고, 리포트의 분석과 피드백도 더 정밀해집니다. "
-        "이 리포트는 교육·멘토링 세션에서 논의를 돕기 위한 참고 자료로 활용됩니다."
-    )
-    elements.append(Spacer(1, 10))
-    elements.append(Paragraph(note_text, small_style))
     elements.append(PageBreak())
 
     # ---------- 2. 스타트업 개요 ----------
