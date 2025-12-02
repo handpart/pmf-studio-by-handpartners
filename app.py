@@ -65,6 +65,77 @@ _QUALITY_FIELDS = [
     "key_feedback",
 ]
 
+# =========================
+# 데이터 품질 평가 유틸
+# =========================
+def assess_data_quality(raw: dict):
+    """
+    창업자가 쓴 텍스트 응답의 '충실도'를 0~100 점으로 평가.
+    - 얼마나 많은 핵심 항목에 내용을 썼는지(coverage)
+    - 그 내용이 어느 정도 길이/밀도를 가지는지(richness)
+    - 너무 짧거나 asdf 등 의미 없는 응답 비율(garbage_ratio)
+    를 조합해서 점수를 만든다.
+    """
+
+    # 서술형 텍스트로 기대하는 주요 필드들
+    text_keys = [
+        "problem", "problem_intensity", "current_alternatives",
+        "willingness_to_pay", "target", "beachhead_customer",
+        "customer_access", "solution", "usp", "mvp_status",
+        "pricing_model", "repeat_usage", "retention_signal",
+        "revenue_status", "key_feedback", "market_size",
+        "channels", "pmf_pull_signal", "referral_signal",
+        "next_experiments", "biggest_risk", "business_item",
+    ]
+
+    total = len(text_keys)
+    nonempty = 0
+    rich = 0
+    garbage_like = 0
+
+    for k in text_keys:
+        v = (raw.get(k) or "").strip()
+        if not v:
+            continue
+        nonempty += 1
+
+        # 어느 정도 길이가 되면 "충실한 답변"으로 가산점
+        if len(v) >= 60:
+            rich += 1
+
+        lower = v.lower()
+
+        # 아주 짧거나, 전형적인 의미 없는 입력 패턴에 패널티
+        if len(v) <= 4:
+            garbage_like += 1
+        elif lower in ("asdf", "qwer", "test", "tt", "11", "1234", "123", "1111"):
+            garbage_like += 1
+
+    if total == 0:
+        return 0, "매우 낮음"
+
+    coverage = nonempty / total          # 얼마나 많은 필드를 썼는지
+    richness = rich / total              # 그 중에서 충분히 풍부한 응답 비율
+
+    # 기본 점수: coverage 60%, richness 40%
+    score = 100 * (0.6 * coverage + 0.4 * richness)
+
+    # 쓰긴 썼는데 의미 없는 응답(garbage)이 많으면 강한 패널티
+    if nonempty > 0:
+        garbage_ratio = garbage_like / max(nonempty, 1)
+        score *= (1.0 - 0.7 * garbage_ratio)
+
+    score = max(0, min(100, int(round(score))))
+
+    if score < 25:
+        label = "매우 낮음"
+    elif score < 60:
+        label = "보통"
+    else:
+        label = "높음"
+
+    return score, label
+
 
 def _estimate_data_quality(raw: dict) -> int:
     """
@@ -318,76 +389,101 @@ def _store_report(report_record):
 
 
 # =========================
-# 리포트 생성 공통 함수 (이메일 모드)
+# 리포트 생성 공통 로직
 # =========================
-def _generate_report_and_optionally_store(raw):
+def _build_pmf_pdf_data(raw: dict):
     """
-    raw 입력을 받아
+    raw 입력을 받아:
     - PMF score 계산
     - 데이터 품질 평가
-    - AI 요약 생성
-    - PDF 생성
-    - 이메일 전송
-    - 대시보드 저장
-    까지 수행
+    - 점수 표시 모드(pmf_score_mode) 결정
+    - AI 요약(ai_summary)까지 포함한 pdf_data 구성
     """
-    # 1) 기본 점수 계산
+
+    # 1) 점수 계산 (기존 로직 그대로 활용)
     comps = build_scores_from_raw(raw)
     score, stage, comps_used = calculate_pmf_score(comps)
 
-    # 2) 데이터 품질 평가
-    qinfo = estimate_answer_quality(raw)
-    q_ratio = qinfo["quality_ratio"]
-    q_score = qinfo["quality_score"]
-    q_label = qinfo["quality_label"]
-
-    # 원점수/단계 보존
     pmf_score_raw = score
-    pmf_stage_raw = stage
+    validation_stage_raw = stage
 
-    # 3) 품질 구간별 점수/단계/노출 방식 결정
-    if q_ratio < 0.25:
-        # 진단 불가 모드: 점수 숨김
-        pmf_score_display = None
-        pmf_stage_display = "데이터 부족(판정 불가)"
-        pmf_score_mode = "no_score"
+    # 2) 데이터 품질 평가
+    data_quality_score, data_quality_label = assess_data_quality(raw)
+
+    # 3) 점수 모드/노트 결정
+    pmf_score_mode = "normal"      # "normal" | "reference" | "invalid"
+    pmf_score_note = ""
+    pmf_score_for_display = None
+
+    try:
+        s_float = float(score)
+        pmf_score_for_display = round(s_float, 1)
+    except Exception:
+        pmf_score_for_display = score
+
+    if data_quality_score < 25:
+        # 거의 아무것도 안 썼거나, asdf 수준의 응답
+        pmf_score_mode = "invalid"
+        pmf_score_for_display = None
+        stage = "데이터 부족(판정 불가)"
         pmf_score_note = (
-            "입력된 정보가 너무 부족하거나 형식적이어서, "
-            "이번 리포트에서는 PMF 점수를 산출하지 않았습니다. "
-            "가급적 각 항목을 한두 문장 이상으로 구체적으로 작성한 뒤 다시 진단해 주세요."
+            "입력된 내용이 너무 짧거나 형식적이어서, 이번 리포트에서는 PMF 점수를 산출하지 않았습니다. "
+            "문제·고객·솔루션·트랙션 항목을 실제 사례와 숫자를 포함해 더 구체적으로 작성하신 뒤 "
+            "다시 진단해 보시길 권장드립니다."
         )
-    elif q_ratio < 0.5:
-        # 참고용 모드: 점수는 보여주되, 참고용임을 명시
-        pmf_score_display = round(score, 1) if score is not None else None
-        pmf_stage_display = stage
+    elif data_quality_score < 60:
+        # 어느 정도는 썼지만, 완전히 신뢰하기엔 부족한 케이스
         pmf_score_mode = "reference"
         pmf_score_note = (
-            "입력 데이터 신뢰도가 낮은 편이므로, 아래 PMF 점수와 단계는 "
-            "절대적인 지표라기보다 '방향성 참고용'으로만 활용해 주세요."
+            "입력 데이터가 부분적으로 부족하여, 본 PMF 점수와 단계는 참고용으로 보시는 것을 권장드립니다. "
+            "각 섹션에 구체적인 고객 사례와 정량 지표를 보완하면 더 정밀한 진단이 가능합니다."
         )
     else:
-        # 정식 진단 모드
-        pmf_score_display = round(score, 1) if score is not None else None
-        pmf_stage_display = stage
+        # 충분히 성실하게 작성된 응답
         pmf_score_mode = "normal"
-        pmf_score_note = ""
+        # pmf_score_note는 빈 문자열(필요 시 나중에 추가 가능)
 
-    # 4) AI 요약 생성 (Gemini 또는 안내 문구)
-    ai_summary = generate_ai_summary(raw, score, stage)
+    # 4) AI 요약(선택) – pmf_score_mode에 따라 다르게
+    ai_summary = raw.get("ai_summary", "").strip()
 
-    # 5) PDF에 전달할 데이터 구성
+    if not ai_summary:
+        # invalid 모드에서는 외부 모델 호출 없이 안내 문구만
+        if pmf_score_mode == "invalid":
+            ai_summary = (
+                "현재 입력된 응답이 매우 짧거나 형식적인 문장이 많아, 신뢰할 수 있는 PMF 분석을 "
+                "진행하기 어렵습니다. 각 항목에 실제 고객 상황, 사용 맥락, 숫자 기반 지표를 3~5문장 "
+                "이상으로 작성해 주시면, 훨씬 정교한 인사이트를 제공해 드릴 수 있습니다."
+            )
+        else:
+            # normal / reference 모드에서만 외부 AI 호출을 시도
+            try:
+                from pmf_ai_feedback_gemini import generate_ai_summary  # 없으면 ImportError
+
+                ai_summary = generate_ai_summary(
+                    raw=raw,
+                    pmf_score=pmf_score_raw,
+                    pmf_stage=validation_stage_raw,
+                    data_quality_score=data_quality_score,
+                    mode=pmf_score_mode,
+                )
+            except Exception as e:
+                # AI 요약이 꼭 필수는 아니므로, 실패 시에는 조용히 넘어간다.
+                app.logger.error(f"AI summary generation failed: {e}")
+                ai_summary = ""
+
+    # 5) PDF에 넘길 데이터 구성
     pdf_data = {
         "startup_name": raw.get("startup_name", "N/A"),
 
-        # PMF 점수/단계 (표시용/원본/품질)
-        "pmf_score": pmf_score_display,
+        # 점수/단계 + 품질/모드 관련
+        "pmf_score": pmf_score_for_display,
         "pmf_score_raw": pmf_score_raw,
         "pmf_score_mode": pmf_score_mode,
         "pmf_score_note": pmf_score_note,
-        "validation_stage": pmf_stage_display,
-        "validation_stage_raw": pmf_stage_raw,
-        "data_quality_score": q_score,
-        "data_quality_label": q_label,
+        "validation_stage": stage,
+        "validation_stage_raw": validation_stage_raw,
+        "data_quality_score": data_quality_score,
+        "data_quality_label": data_quality_label,
 
         # 기본 정보
         "contact_email": raw.get("contact_email", ""),
@@ -420,6 +516,7 @@ def _generate_report_and_optionally_store(raw):
 
         # Go-to-Market
         "market_size": raw.get("market_size", ""),
+        "market_data": raw.get("market_data", ""),
         "channels": raw.get("channels", ""),
         "cac_ltv_estimate": raw.get("cac_ltv_estimate", ""),
 
@@ -427,23 +524,55 @@ def _generate_report_and_optionally_store(raw):
         "pmf_pull_signal": raw.get("pmf_pull_signal", ""),
         "referral_signal": raw.get("referral_signal", ""),
 
-        # 종합 요약/제언
-        "market_data": raw.get("market_data", ""),
+        # 종합 요약/제언 + AI 인사이트
         "summary": raw.get("summary", ""),
-        "ai_summary": ai_summary,
         "recommendations": raw.get("recommendations", ""),
+        "ai_summary": ai_summary,
 
         # 다음 실행
         "next_experiments": raw.get("next_experiments", ""),
         "biggest_risk": raw.get("biggest_risk", ""),
     }
 
-    # 6) PDF 생성
+    return (
+        pdf_data,
+        pmf_score_for_display,
+        stage,
+        pmf_score_raw,
+        validation_stage_raw,
+        data_quality_score,
+        data_quality_label,
+        pmf_score_mode,
+        pmf_score_note,
+    )
+
+def _generate_report_and_optionally_store(raw):
+    """
+    폼/JSON 입력(raw)을 받아:
+    - PMF 점수/단계/데이터 품질 계산
+    - PDF 생성
+    - (필요 시) 이메일 전송
+    - Supabase 또는 로컬에 리포트 저장
+    """
+
+    (
+        pdf_data,
+        pmf_score_for_display,
+        stage,
+        pmf_score_raw,
+        validation_stage_raw,
+        data_quality_score,
+        data_quality_label,
+        pmf_score_mode,
+        pmf_score_note,
+    ) = _build_pmf_pdf_data(raw)
+
+    # 1) PDF 생성
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     tmp.close()
     generate_pmf_report_v2(pdf_data, tmp.name)
 
-    # 7) 이메일 전송 시도
+    # 2) 이메일 전송 시도
     to_email = raw.get("contact_email") or raw.get("email")
     email_sent = False
     email_error = None
@@ -453,169 +582,94 @@ def _generate_report_and_optionally_store(raw):
                 to_email,
                 tmp.name,
                 pdf_data["startup_name"],
-                pmf_score_display if pmf_score_display is not None else pmf_score_raw,
-                pmf_stage_display,
+                pmf_score_for_display,
+                stage,
             )
             email_sent = True
         except Exception as e:
             email_error = str(e)
             app.logger.error(f"Email send error: {e}")
 
-    # 8) PDF 임시 파일 삭제
+    # 3) PDF 임시 파일 삭제
     try:
         os.remove(tmp.name)
     except Exception as e:
         app.logger.warning(f"Temporary file deletion failed: {e}")
 
-    # 9) 저장용 레코드 구성
+    # 4) 저장용 레코드 구성
     report_record = {
         "id": uuid.uuid4().hex,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "startup_name": pdf_data["startup_name"],
-        "pmf_score": pmf_score_raw,
-        "stage": pmf_stage_raw,
-        "drive_link": None,  # 더 이상 사용하지 않지만 필드는 유지
+        "pmf_score": pmf_score_for_display,
+        "stage": stage,
+        "drive_link": None,
         "email": to_email,
         "email_sent": email_sent,
         "email_error": email_error,
-        "raw": raw,
-        "data_quality_score": q_score,
-        "data_quality_label": q_label,
+        "raw": {
+            **raw,
+            "pmf_score_raw": pmf_score_raw,
+            "validation_stage_raw": validation_stage_raw,
+            "data_quality_score": data_quality_score,
+            "data_quality_label": data_quality_label,
+            "pmf_score_mode": pmf_score_mode,
+        },
     }
     _store_report(report_record)
 
-    # 기존 인터페이스 유지: drive_link 대신 None, email_sent 추가
-    # 화면/JSON 응답에서는 표시용 점수/단계를 사용하도록 score, stage 반환
-    effective_score = pmf_score_display if pmf_score_display is not None else pmf_score_raw
-    effective_stage = pmf_stage_display
-    return effective_score, effective_stage, None, email_sent
+    return pmf_score_for_display, stage, None, email_sent
 
-# =========================
-# 리포트 생성 공통 함수 (다운로드 전용)
-# =========================
 def _generate_report_for_download(raw):
     """
     폼 입력(raw)을 받아:
-    - PMF score/stage 계산
-    - 데이터 품질 평가
-    - AI 요약 생성
+    - PMF 점수/단계/품질 계산
     - PDF 생성
-    - 대시보드용 리포트 저장
+    - 리포트 저장
     - PDF 파일 경로와 스타트업 이름 반환
     (이메일은 보내지 않음)
     """
-    comps = build_scores_from_raw(raw)
-    score, stage, comps_used = calculate_pmf_score(comps)
 
-    qinfo = estimate_answer_quality(raw)
-    q_ratio = qinfo["quality_ratio"]
-    q_score = qinfo["quality_score"]
-    q_label = qinfo["quality_label"]
+    (
+        pdf_data,
+        pmf_score_for_display,
+        stage,
+        pmf_score_raw,
+        validation_stage_raw,
+        data_quality_score,
+        data_quality_label,
+        pmf_score_mode,
+        pmf_score_note,
+    ) = _build_pmf_pdf_data(raw)
 
-    pmf_score_raw = score
-    pmf_stage_raw = stage
-
-    if q_ratio < 0.25:
-        pmf_score_display = None
-        pmf_stage_display = "데이터 부족(판정 불가)"
-        pmf_score_mode = "no_score"
-        pmf_score_note = (
-            "입력된 정보가 너무 부족하거나 형식적이어서, "
-            "이번 리포트에서는 PMF 점수를 산출하지 않았습니다. "
-            "가급적 각 항목을 한두 문장 이상으로 구체적으로 작성한 뒤 다시 진단해 주세요."
-        )
-    elif q_ratio < 0.5:
-        pmf_score_display = round(score, 1) if score is not None else None
-        pmf_stage_display = stage
-        pmf_score_mode = "reference"
-        pmf_score_note = (
-            "입력 데이터 신뢰도가 낮은 편이므로, 아래 PMF 점수와 단계는 "
-            "절대적인 지표라기보다 '방향성 참고용'으로만 활용해 주세요."
-        )
-    else:
-        pmf_score_display = round(score, 1) if score is not None else None
-        pmf_stage_display = stage
-        pmf_score_mode = "normal"
-        pmf_score_note = ""
-
-    ai_summary = generate_ai_summary(raw, score, stage)
-
-    pdf_data = {
-        "startup_name": raw.get("startup_name", "N/A"),
-
-        "pmf_score": pmf_score_display,
-        "pmf_score_raw": pmf_score_raw,
-        "pmf_score_mode": pmf_score_mode,
-        "pmf_score_note": pmf_score_note,
-        "validation_stage": pmf_stage_display,
-        "validation_stage_raw": pmf_stage_raw,
-        "data_quality_score": q_score,
-        "data_quality_label": q_label,
-
-        "contact_email": raw.get("contact_email", ""),
-        "industry": raw.get("industry", ""),
-        "business_item": raw.get("business_item", ""),
-        "startup_stage": raw.get("startup_stage", ""),
-        "team_size": raw.get("team_size", ""),
-
-        "problem": raw.get("problem", ""),
-        "problem_intensity": raw.get("problem_intensity", ""),
-        "current_alternatives": raw.get("current_alternatives", ""),
-        "willingness_to_pay": raw.get("willingness_to_pay", ""),
-        "target": raw.get("target", ""),
-        "beachhead_customer": raw.get("beachhead_customer", ""),
-        "customer_access": raw.get("customer_access", ""),
-
-        "solution": raw.get("solution", ""),
-        "usp": raw.get("usp", ""),
-        "mvp_status": raw.get("mvp_status", ""),
-        "pricing_model": raw.get("pricing_model", ""),
-
-        "users_count": raw.get("users_count", ""),
-        "repeat_usage": raw.get("repeat_usage", ""),
-        "retention_signal": raw.get("retention_signal", ""),
-        "revenue_status": raw.get("revenue_status", ""),
-        "key_feedback": raw.get("key_feedback", ""),
-
-        "market_size": raw.get("market_size", ""),
-        "channels": raw.get("channels", ""),
-        "cac_ltv_estimate": raw.get("cac_ltv_estimate", ""),
-
-        "pmf_pull_signal": raw.get("pmf_pull_signal", ""),
-        "referral_signal": raw.get("referral_signal", ""),
-
-        "market_data": raw.get("market_data", ""),
-        "summary": raw.get("summary", ""),
-        "ai_summary": ai_summary,
-        "recommendations": raw.get("recommendations", ""),
-
-        "next_experiments": raw.get("next_experiments", ""),
-        "biggest_risk": raw.get("biggest_risk", ""),
-    }
-
+    # 1) PDF 생성
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     tmp.close()
     generate_pmf_report_v2(pdf_data, tmp.name)
 
+    # 2) 저장용 레코드 (다운로드 전용, 이메일 X)
     report_record = {
         "id": uuid.uuid4().hex,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "startup_name": pdf_data["startup_name"],
-        "pmf_score": pmf_score_raw,
-        "stage": pmf_stage_raw,
+        "pmf_score": pmf_score_for_display,
+        "stage": stage,
         "drive_link": None,
         "email": raw.get("contact_email") or raw.get("email"),
         "email_sent": False,
         "email_error": "download_only",
-        "raw": raw,
-        "data_quality_score": q_score,
-        "data_quality_label": q_label,
+        "raw": {
+            **raw,
+            "pmf_score_raw": pmf_score_raw,
+            "validation_stage_raw": validation_stage_raw,
+            "data_quality_score": data_quality_score,
+            "data_quality_label": data_quality_label,
+            "pmf_score_mode": pmf_score_mode,
+        },
     }
     _store_report(report_record)
 
-    effective_score = pmf_score_display if pmf_score_display is not None else pmf_score_raw
-    effective_stage = pmf_stage_display
-    return effective_score, effective_stage, tmp.name, pdf_data["startup_name"]
+    return pmf_score_for_display, stage, tmp.name, pdf_data["startup_name"]
 
 
 # =========================

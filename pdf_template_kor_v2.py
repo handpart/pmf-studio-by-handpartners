@@ -105,42 +105,37 @@ def _build_rule_based_summary(score, stage, quality_score=None):
     PMF 점수 / 단계(+ 선택적으로 데이터 품질 점수)에 따라
     HAND PARTNERS 스타일의 기본 코멘트 생성
     """
-    try:
-        s = float(score)
-    except Exception:
-        # 점수 파싱이 안 되면 아주 일반적인 코멘트
-        base = (
-            "현재 입력된 정보를 기반으로 PMF를 정성적으로 검토할 수 있는 초기 자료가 확보된 상태입니다. "
-            "핵심 가설(문제·고객·가치 제안)을 명확히 문서화하고, 4주 단위의 짧은 실험 사이클로 "
-            "검증–보완을 반복하는 전략을 권장드립니다."
-        )
-        # 품질 점수가 아주 낮으면 한 줄 정도 보완 안내를 덧붙임
-        try:
-            q = float(quality_score) if quality_score is not None else None
-        except Exception:
-            q = None
-
-        if q is not None and q < 25:
-            base += (
-                " 다만 현재 응답이 매우 짧거나 형식적인 부분이 많아, "
-                "보다 구체적인 사례와 숫자를 보완해 주시면 분석 정밀도가 크게 올라갈 것입니다."
-            )
-        return base
-
-    # stage는 아직 크게 쓰진 않지만, 나중 확장 대비해서 소문자로 정리
-    stage = (stage or "").lower()
-
-    # 품질 점수(0~100)를 0~1로 스케일
+    # 데이터 품질 먼저 숫자로 변환 시도
     try:
         q = float(quality_score) if quality_score is not None else None
     except Exception:
         q = None
 
+    # 점수가 아예 없거나("산출 불가" 케이스)
+    try:
+        s = float(score)
+    except Exception:
+        base = (
+            "현재 입력된 정보를 기반으로 PMF를 정성적으로 검토할 수 있는 초기 자료가 확보된 상태입니다. "
+            "다만 일부 핵심 항목이 비어 있거나 매우 간략하게 작성되어 있어, 이번 리포트의 평가는 "
+            "방향성 참고용으로 활용하시길 권장드립니다. "
+            "문제·고객·솔루션·트랙션 항목을 실제 고객 사례와 숫자 중심으로 보완해 주시면 "
+            "보다 정밀한 진단이 가능합니다."
+        )
+        if q is not None and q < 25:
+            base += (
+                " 특히, 응답이 한두 단어 수준에 그치거나 반복적인 텍스트가 많은 편이므로 "
+                "각 항목당 최소 3~5문장 정도로 구체적인 맥락을 추가해 주시면 좋습니다."
+            )
+        return base
+
+    stage = (stage or "").lower()
+
     # ===== 점수 구간별 기본 코멘트 =====
     if s < 30:
         base = (
             "현재 단계는 아직 PMF 이전(Early Problem Fit)에 가까운 상태로 보입니다. "
-            "고객이 정말로 겪고 있는 구체적인 Pain을 더 깊게 정의하고, "
+            "고객이 실제로 겪고 있는 구체적인 Pain을 더 깊이 정의하고, "
             "문제의 강도·빈도·대안 솔루션에 대한 정성 인터뷰를 최소 10~20건 이상 추가 확보하는 것이 중요합니다. "
             "이 시기에는 기능 개발보다 '올바른 문제 정의와 타겟 세분화'에 대부분의 에너지를 쓰는 것이 좋습니다."
         )
@@ -171,14 +166,13 @@ def _build_rule_based_summary(score, stage, quality_score=None):
     # ===== 응답 품질이 낮을 때는 톤을 조금 보수적으로 보정 =====
     if q is not None and q < 25:
         base += (
-            " 다만 현재 설문 응답이 매우 간략하게 작성되어 있어, "
-            "위 평가는 방향성 참고용으로만 활용하시고 문제·고객·솔루션·트랙션 항목을 "
-            "좀 더 구체적인 예시와 데이터로 보완하신 뒤 다시 진단해 보시는 것을 권장드립니다."
+            " 다만 현재 설문 응답이 매우 간략하게 작성되어 있어, 위 평가는 방향성 참고용으로만 활용하시고 "
+            "주요 항목을 보다 구체적인 예시와 데이터로 보완하신 뒤 다시 진단을 받아 보시는 것을 권장드립니다."
         )
     elif q is not None and q < 50:
         base += (
-            " 응답의 세부 정보가 아직 충분히 풍부하지는 않아, "
-            "점수와 단계는 절대적인 수치라기보다 대략적인 위치를 가늠하는 용도로 활용해 주시면 좋겠습니다."
+            " 응답의 세부 정보가 아직 충분히 풍부하지는 않아, 점수와 단계는 절대적인 수치라기보다 "
+            "대략적인 위치를 가늠하는 용도로 활용해 주시면 좋겠습니다."
         )
 
     return base
@@ -273,11 +267,13 @@ def generate_pmf_report_v2(data, output_path):
     )
 
     # ---------- 여기서부터 "점수/품질/기본 정보"를 한 번에 정의 ----------
+    # ---------- 점수/품질/기본 정보 ----------
     pmf_score = data.get("pmf_score", None)
     pmf_score_raw = data.get("pmf_score_raw", pmf_score)
     pmf_score_mode = data.get("pmf_score_mode", "normal")
     pmf_score_note = data.get("pmf_score_note", "")
     validation_stage = data.get("validation_stage", "N/A")
+    validation_stage_raw = data.get("validation_stage_raw", validation_stage)
 
     data_quality_score = data.get("data_quality_score", None)
     data_quality_label = data.get("data_quality_label", None)
@@ -318,11 +314,36 @@ def generate_pmf_report_v2(data, output_path):
     elements.append(Paragraph(intro_text, cover_body_style))
     elements.append(PageBreak())
 
+    # ---------- 1. 표지 ----------
+    today = datetime.date.today().strftime("%Y-%m-%d")
+
+    elements.append(Spacer(1, 60))
+    elements.append(Paragraph("PMF 진단 리포트", title_style))
+    elements.append(Paragraph(startup_name, subtitle_style))
+    elements.append(Spacer(1, 20))
+
+    cover_subtitle = (
+        "Global Scale-up Accelerator, HAND Partners<br/>"
+        "PMF Studio 진단 프레임워크 기반 분석 리포트"
+    )
+    elements.append(Paragraph(cover_subtitle, cover_body_style))
+    elements.append(Paragraph(today, small_style))
+    elements.append(Spacer(1, 30))
+
+    intro_text = (
+        "이 리포트는 HAND PARTNERS의 PMF Studio를 통해 수집된 정보를 바탕으로, "
+        "현재 스타트업의 Problem–Solution Fit 및 PMF 신호를 정량·정성적으로 해석한 결과입니다. "
+        "각 섹션은 문제–고객–솔루션–트랙션–Go-to-Market 관점에서 핵심 인사이트를 제공하며, "
+        "다음 단계 실행을 위한 실질적인 논의 기반으로 활용할 수 있습니다."
+    )
+    elements.append(Paragraph(intro_text, cover_body_style))
+    elements.append(PageBreak())
+
     # ---------- 2. 스타트업 개요 ----------
     elements.append(Paragraph("1. 스타트업 개요", section_title_style))
 
-    # PMF 점수 표시용 문자열 구성
-    if pmf_score is None:
+    # PMF 점수 표시 문구
+    if pmf_score is None or pmf_score_mode == "invalid":
         pmf_score_line = "점수 산출 불가 (데이터 부족)"
     else:
         if pmf_score_mode == "reference":
@@ -330,6 +351,7 @@ def generate_pmf_report_v2(data, output_path):
         else:
             pmf_score_line = f"{pmf_score}점"
 
+    # 데이터 품질 표시 문구
     if data_quality_score is not None and data_quality_label:
         quality_line = f"{data_quality_label} (Data Quality Score: {data_quality_score}/100)"
     else:
@@ -441,7 +463,6 @@ def generate_pmf_report_v2(data, output_path):
     recommendations = data.get("recommendations", "")
     next_experiments = data.get("next_experiments", "")
     biggest_risk = data.get("biggest_risk", "")
-    data_quality_score = data.get("data_quality_score")
 
     # 1) 사용자가 summary/recommendations를 직접 넣은 경우 우선 사용
     if summary or recommendations:
@@ -451,7 +472,7 @@ def generate_pmf_report_v2(data, output_path):
         summary_text = _build_rule_based_summary(
             data.get("pmf_score_raw"),
             data.get("validation_stage_raw"),
-            data_quality_score,
+            data.get("data_quality_score"),
         )
 
     section6_html = f"""
