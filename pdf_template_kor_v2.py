@@ -100,92 +100,88 @@ def _quality_label(score: int) -> str:
         return "낮음"
 
 
-def _build_rule_based_summary(score, stage, quality_score: int) -> str:
+def _build_rule_based_summary(score, stage, quality_score=None):
     """
-    PMF 점수 / 단계 / 데이터 품질에 따라 HAND PARTNERS 스타일의 코멘트 생성.
-    - 데이터 품질이 낮으면 우선 '정보 보완'을 강하게 권장
-    - 품질이 어느 정도 이상이면 점수 구간별로 전략 코멘트 제공
+    PMF 점수 / 단계(+ 선택적으로 데이터 품질 점수)에 따라
+    HAND PARTNERS 스타일의 기본 코멘트 생성
     """
     try:
         s = float(score)
     except Exception:
-        s = None
-
-    stage = (stage or "").lower()
-    q = quality_score or 0
-
-    # 1) 데이터 품질이 매우 낮은 경우: 점수보다 "먼저 제대로 쓰라"는 메시지
-    if q < 30:
+        # 점수 파싱이 안 되면 아주 일반적인 코멘트
         base = (
-            "이번에 입력해 주신 내용은 길이가 매우 짧거나 숫자/형식적 표현이 많아, "
-            "PMF 진단 결과의 신뢰도가 낮은 상태입니다. "
-            "핵심 문제, 타겟 고객, 솔루션, 실제 고객 반응을 문장으로 2~3줄만 더 구체적으로 적어 주시면 "
-            "훨씬 깊이 있는 피드백을 드릴 수 있습니다. "
+            "현재 입력된 정보를 기반으로 PMF를 정성적으로 검토할 수 있는 초기 자료가 확보된 상태입니다. "
+            "핵심 가설(문제·고객·가치 제안)을 명확히 문서화하고, 4주 단위의 짧은 실험 사이클로 "
+            "검증–보완을 반복하는 전략을 권장드립니다."
         )
-        if s is not None:
+        # 품질 점수가 아주 낮으면 한 줄 정도 보완 안내를 덧붙임
+        try:
+            q = float(quality_score) if quality_score is not None else None
+        except Exception:
+            q = None
+
+        if q is not None and q < 25:
             base += (
-                "따라서 이번 PMF 점수와 단계는 참고용으로만 보시고, "
-                "교육/코칭 세션에서는 먼저 정보 보완과 가설 정리부터 진행하는 것을 권장드립니다."
-            )
-        else:
-            base += (
-                "다음 진단에서는 각 문항에 실제 사례와 수치를 곁들여 작성해 주시면, "
-                "보다 정교한 PMF 분석이 가능합니다."
+                " 다만 현재 응답이 매우 짧거나 형식적인 부분이 많아, "
+                "보다 구체적인 사례와 숫자를 보완해 주시면 분석 정밀도가 크게 올라갈 것입니다."
             )
         return base
 
-    # 2) 데이터 품질이 중간 정도인 경우: 조심스럽게 해석 + 더 정성스러운 작성 유도
-    if q < 60 and s is not None:
-        prefix = (
-            f"입력 데이터의 신뢰도는 '보통({q}/100)' 수준으로, "
-            "PMF 신호를 어느 정도 가늠해 볼 수 있는 상태입니다. 다만 일부 문항은 "
-            "조금 더 구체적으로 작성해 주시면 해석 정확도가 높아질 수 있습니다. "
-        )
-    else:
-        prefix = ""
+    # stage는 아직 크게 쓰진 않지만, 나중 확장 대비해서 소문자로 정리
+    stage = (stage or "").lower()
 
-    # 3) 점수에 따른 본격 코멘트
-    if s is None:
-        return (
-            prefix
-            + "현재 입력된 정보를 기반으로 PMF를 정성적으로 검토할 수 있는 초기 자료가 확보된 상태입니다. "
-            "핵심 가설(문제·고객·가치 제안)을 문서화하고, 4주 단위의 짧은 실험 사이클로 "
-            "검증–보완을 반복하는 전략을 권장드립니다."
-        )
+    # 품질 점수(0~100)를 0~1로 스케일
+    try:
+        q = float(quality_score) if quality_score is not None else None
+    except Exception:
+        q = None
 
+    # ===== 점수 구간별 기본 코멘트 =====
     if s < 30:
-        return (
-            prefix
-            + "현재 단계는 아직 PMF 이전(Early Problem Fit)에 가까운 상태로 보입니다. "
-            "고객이 실제로 겪는 Pain을 더 깊게 정의하고, 문제의 강도·빈도·대안 솔루션에 대한 "
-            "정성 인터뷰를 추가로 확보하는 것이 중요합니다. 이 시기에는 기능 개발보다 "
-            "'올바른 문제 정의와 타겟 세분화'에 대부분의 에너지를 쓰는 것이 좋습니다."
+        base = (
+            "현재 단계는 아직 PMF 이전(Early Problem Fit)에 가까운 상태로 보입니다. "
+            "고객이 정말로 겪고 있는 구체적인 Pain을 더 깊게 정의하고, "
+            "문제의 강도·빈도·대안 솔루션에 대한 정성 인터뷰를 최소 10~20건 이상 추가 확보하는 것이 중요합니다. "
+            "이 시기에는 기능 개발보다 '올바른 문제 정의와 타겟 세분화'에 대부분의 에너지를 쓰는 것이 좋습니다."
         )
     elif s < 50:
-        return (
-            prefix
-            + "Problem/Solution Fit 단계에 진입한 것으로 판단됩니다. "
-            "핵심 문제와 제안하는 솔루션 사이의 논리적 연결은 보이지만, 아직 반복 사용·지불 의사 측면에서 "
-            "명확한 신호가 부족합니다. 초기 Beachhead 세그먼트를 더 좁게 정의하고, 파일럿·PoC를 통해 "
-            "과금 실험과 리텐션 지표를 집중적으로 확인해보는 것을 추천드립니다."
+        base = (
+            "Problem/Solution Fit 단계에 진입한 것으로 판단됩니다. "
+            "핵심 문제와 제안하는 솔루션 사이의 논리적 연결은 보이지만, 아직 고객의 반복 사용·지불 의사 측면에서 "
+            "명확한 신호가 부족합니다. "
+            "초기 Beachhead 세그먼트를 더 좁게 정의하고, 실제 파일럿·PoC를 통해 과금 실험과 리텐션 지표를 "
+            "집중적으로 확인해보는 것을 추천드립니다."
         )
     elif s < 70:
-        return (
-            prefix
-            + "초기 PMF 신호가 일부 관찰되고 있는 단계로 보입니다. "
+        base = (
+            "초기 PMF 신호가 일부 관찰되고 있는 단계로 보입니다. "
             "재사용·재구매, 추천, 자연 유입 등에서 긍정적인 패턴이 나타나고 있으며, "
             "이제는 채널 별 유닛 이코노믹스(CAC/LTV)를 설계하고, 스케일업 가능성이 높은 세그먼트에 "
-            "집중하는 것이 중요합니다. 제품 사용 데이터를 기반으로 '헤비 유저의 공통점'을 분석해 "
-            "더 선명한 ICP를 정의해 보시길 권장합니다."
+            "집중하는 것이 중요합니다. "
+            "동시에 제품 사용 데이터를 기반으로 '헤비 유저의 공통점'을 분석해 보다 선명한 ICP를 정의해 보시길 권장합니다."
         )
     else:
-        return (
-            prefix
-            + "특정 세그먼트에서는 이미 PMF에 상당히 근접했거나 도달한 상태로 해석됩니다. "
-            "이 단계에서는 무리한 기능 확장보다, 검증된 핵심 가치 제안을 중심으로 운영 효율화와 "
+        base = (
+            "PMF에 상당히 근접했거나 특정 세그먼트에서는 이미 PMF에 도달한 상태로 해석됩니다. "
+            "이 단계에서는 무리한 기능 확장보다는, 검증된 핵심 가치 제안을 중심으로 운영 효율화와 "
             "획득 채널 확장(Performance, 파트너십, 리셀러 등)에 집중하는 전략이 효과적입니다. "
             "동시에 고객 이탈 사유와 NPS를 정기적으로 모니터링하며, PMF 상태가 유지되는지 관리하는 것이 중요합니다."
         )
+
+    # ===== 응답 품질이 낮을 때는 톤을 조금 보수적으로 보정 =====
+    if q is not None and q < 25:
+        base += (
+            " 다만 현재 설문 응답이 매우 간략하게 작성되어 있어, "
+            "위 평가는 방향성 참고용으로만 활용하시고 문제·고객·솔루션·트랙션 항목을 "
+            "좀 더 구체적인 예시와 데이터로 보완하신 뒤 다시 진단해 보시는 것을 권장드립니다."
+        )
+    elif q is not None and q < 50:
+        base += (
+            " 응답의 세부 정보가 아직 충분히 풍부하지는 않아, "
+            "점수와 단계는 절대적인 수치라기보다 대략적인 위치를 가늠하는 용도로 활용해 주시면 좋겠습니다."
+        )
+
+    return base
 
 
 def _value_or_dash(v: str):
@@ -445,15 +441,17 @@ def generate_pmf_report_v2(data, output_path):
     recommendations = data.get("recommendations", "")
     next_experiments = data.get("next_experiments", "")
     biggest_risk = data.get("biggest_risk", "")
+    data_quality_score = data.get("data_quality_score")
 
     # 1) 사용자가 summary/recommendations를 직접 넣은 경우 우선 사용
     if summary or recommendations:
         summary_text = summary or recommendations
     else:
-        # 2) 비어 있으면 PMF 점수/단계를 기반으로 규칙 기반 코멘트 생성
+        # 2) 비어 있으면 PMF 점수/단계/품질을 기반으로 규칙 기반 코멘트 생성
         summary_text = _build_rule_based_summary(
             data.get("pmf_score_raw"),
             data.get("validation_stage_raw"),
+            data_quality_score,
         )
 
     section6_html = f"""
