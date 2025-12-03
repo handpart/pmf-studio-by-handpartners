@@ -2,6 +2,7 @@ import os
 import json
 import tempfile
 import uuid
+from pmf_ai_feedback_gemini import generate_ai_summary, estimate_answer_quality
 from datetime import datetime, timezone
 
 from flask import Flask, request, jsonify, render_template_string, send_file
