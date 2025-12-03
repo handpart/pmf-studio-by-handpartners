@@ -87,13 +87,26 @@ def estimate_answer_quality(raw: dict) -> dict:
     }
 
 
-def _build_prompt(raw: dict, score, stage: str, quality_score: float) -> str:
+def _build_prompt(
+    raw: dict,
+    pmf_score,
+    pmf_stage: str,
+    quality_ratio: float,
+    data_quality_score=None,
+    mode: str = "normal",
+) -> str:
     """
     Gemini에게 넘길 프롬프트 생성.
     HAND PARTNERS의 PMF Studio 멘토가 쓴 것 같은 톤으로 요청.
     """
     def g(key: str) -> str:
         return (raw.get(key) or "").strip()
+
+    dq_text = (
+        f"{data_quality_score}/100"
+        if data_quality_score is not None
+        else "N/A"
+    )
 
     prompt = f"""
 당신은 HAND PARTNERS의 파트너이자 세계적인 초기 스타트업 투자자입니다.
@@ -102,9 +115,11 @@ def _build_prompt(raw: dict, score, stage: str, quality_score: float) -> str:
 
 --- 시스템 정보 ---
 - 프로그램: PMF Studio by HAND PARTNERS
-- PMF 점수: {score}
-- PMF 단계: {stage}
-- 응답 성실도(내부 추정 지표, 0~1): {quality_score:.2f}
+- PMF 점수(내부 계산값): {pmf_score}
+- PMF 단계(내부 계산값): {pmf_stage}
+- 응답 성실도(LLM 추정, 0~1): {quality_ratio:.2f}
+- 데이터 품질 점수(룰 기반, 0~100): {dq_text}
+- 점수 모드: {mode}
 
 --- 스타트업 개요 ---
 - 스타트업 이름: {g("startup_name")}
@@ -147,22 +162,40 @@ def _build_prompt(raw: dict, score, stage: str, quality_score: float) -> str:
 - 가장 큰 리스크/가설: {g("biggest_risk")}
 
 --- 작성 방식 가이드 ---
-    1. 한국어로 A4용지 4장 정도 분량의 내용으로 작성해 주세요.
-    2. 구조는 다음 네 부분을 나눠서 작성해주세요:
-       (1) 사업 아이템 소개를 분석하여 이에 속하는 산업/분야에 대한 현황 요약
+    1. 한국어로, 핵심에 집중하여 A4용지 4장 분량으로 작성해 주세요. 
+    2. 구조는 다음 네 부분으로 나눠 주세요:
+       (1) 사업 아이템 소개를 바탕으로 한 산업/분야의 현황 및 맥락 요약
        (2) 현재 PMF 관점에서의 진단 요약
-       (3) 지금 보이는 강점 2~3가지와 단점 2~3가지
+       (3) 지금 보이는 강점 2~3가지와 개선이 필요한 점/리스크 2~3가지
        (4) 향후 4주 안에 반드시 검증해야 할 핵심 가설과 실행 제안
     3. 응답이 숫자 위주이거나 정보가 부족해 보이면,
-       그 사실을 먼저 지적하고 어떤 항목을 더 구체적으로 써야 하는지 짧게 안내해 주세요.
+       그 사실을 먼저 짧게 지적하고 어떤 항목을 더 구체적으로 써야 하는지 안내해 주세요.
     4. 너무 포장하지 말고, 초기 단계 스타트업을 멘토링하는 투자자의 현실적인 톤을 유지해 주세요.
 """
     return dedent(prompt)
 
 
-def generate_ai_summary(raw: dict, score, stage: str) -> str:
+def generate_ai_summary(
+    raw: dict,
+    pmf_score=None,
+    pmf_stage: str = "",
+    data_quality_score=None,
+    mode: str = "normal",
+    *args,
+    **kwargs,
+) -> str:
     """
     Gemini API를 호출해 HAND PARTNERS 스타일의 PMF 인사이트 요약을 생성.
+
+    app.py에서는 보통 다음과 같이 호출:
+        generate_ai_summary(
+            raw=raw,
+            pmf_score=pmf_score_raw,
+            pmf_stage=validation_stage_raw,
+            data_quality_score=data_quality_score,
+            mode=pmf_score_mode,
+        )
+
     - 환경 변수 GEMINI_API_KEY가 없거나 라이브러리가 없으면 "" 반환
     - 입력이 너무 부실하면 사람이 다시 쓰도록 유도하는 메시지 반환
     """
@@ -171,11 +204,12 @@ def generate_ai_summary(raw: dict, score, stage: str) -> str:
         # 설정 안 되어 있으면 그냥 빈 문자열 -> PDF에서는 기본 룰 기반 문구만 사용
         return ""
 
+    # 성실도 평가 (LLM용)
     qinfo = estimate_answer_quality(raw)
-    quality = qinfo["quality_ratio"]
+    quality_ratio = qinfo["quality_ratio"]
 
     # 응답이 너무 부실한 경우: 굳이 API 호출 안 하고 안내 문구만
-    if quality < 0.25:
+    if quality_ratio < 0.25:
         return (
             "현재 입력된 내용이 너무 짧거나 숫자 위주라서 신뢰할 만한 PMF 분석을 하기 어렵습니다. "
             "특히 아래 항목들을 최소 한두 문장 이상으로 구체적으로 작성해 주세요:\n"
@@ -186,9 +220,20 @@ def generate_ai_summary(raw: dict, score, stage: str) -> str:
             "이 항목들을 보완한 뒤 다시 진단을 실행하시면 훨씬 정확한 피드백을 받으실 수 있습니다."
         )
 
+    # pmf_score / pmf_stage가 None일 수 있으므로, 최소한의 기본값 처리
+    score_for_prompt = pmf_score if pmf_score is not None else raw.get("pmf_score") or "-"
+    stage_for_prompt = pmf_stage or raw.get("validation_stage") or "-"
+
     try:
         client = genai.Client(api_key=api_key)
-        prompt = _build_prompt(raw, score, stage, quality)
+        prompt = _build_prompt(
+            raw=raw,
+            pmf_score=score_for_prompt,
+            pmf_stage=stage_for_prompt,
+            quality_ratio=quality_ratio,
+            data_quality_score=data_quality_score,
+            mode=mode,
+        )
         resp = client.models.generate_content(
             model=DEFAULT_MODEL,
             contents=prompt,

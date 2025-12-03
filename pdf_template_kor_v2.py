@@ -38,13 +38,12 @@ BODY_FONT = "NanumGothic"        # 본문
 
 
 # ---------------------------
-# 데이터 품질 추정 (간단한 휴리스틱)
+# (옵션) 데이터 품질 추정 – app.py에서 넘어오지 않을 때만 백업용으로 사용
 # ---------------------------
 def _estimate_data_quality(data: dict) -> int:
     """
     텍스트 기반 핵심 필드를 간단히 스코어링해서 0~100 사이의 데이터 품질 점수로 환산.
-    - 너무 짧은 답변, 숫자 위주 입력은 낮게
-    - 2~3문장 수준으로 정성스럽게 쓰면 자연스럽게 점수↑
+    app.py에서 data_quality_score가 넘어오지 않는 옛 버전과의 호환용.
     """
     key_fields = [
         "problem",
@@ -66,7 +65,7 @@ def _estimate_data_quality(data: dict) -> int:
         length = len(txt)
         score = 0
 
-        # 길이에 따른 점수 (아주 길지 않아도, 어느 정도만 정성스럽게 쓰면 괜찮게 나오도록)
+        # 길이에 따른 점수
         if length >= 60:
             score += 45
         elif length >= 30:
@@ -76,7 +75,7 @@ def _estimate_data_quality(data: dict) -> int:
         else:
             score += 10  # 한두 문장이라도 있으면 최소 점수
 
-        # 숫자 비율이 너무 높으면 감점 (대충 "123", "111" 이런 입력 방지용)
+        # 숫자 비율이 너무 높으면 감점
         digits = sum(c.isdigit() for c in txt)
         letters = sum(c.isalpha() for c in txt)
         if digits > 0 and digits >= letters * 2:
@@ -266,7 +265,6 @@ def generate_pmf_report_v2(data, output_path):
         textColor=colors.HexColor("#777777"),
     )
 
-    # ---------- 여기서부터 "점수/품질/기본 정보"를 한 번에 정의 ----------
     # ---------- 점수/품질/기본 정보 ----------
     pmf_score = data.get("pmf_score", None)
     pmf_score_raw = data.get("pmf_score_raw", pmf_score)
@@ -277,6 +275,7 @@ def generate_pmf_report_v2(data, output_path):
 
     data_quality_score = data.get("data_quality_score", None)
     data_quality_label = data.get("data_quality_label", None)
+    data_quality_score_llm = data.get("data_quality_score_llm", None)
 
     startup_name = data.get("startup_name", "N/A")
     industry = data.get("industry", "")
@@ -285,36 +284,13 @@ def generate_pmf_report_v2(data, output_path):
     team_size = data.get("team_size", "")
     contact_email = data.get("contact_email", "")
 
-    # ---------- 0. 데이터 품질 계산 ----------
-    quality_score = _estimate_data_quality(data)
-    quality_label = _quality_label(quality_score)
+    # ---------- (백업) app.py에서 품질 점수가 안 넘어온 옛 데이터일 경우 계산 ----------
+    if data_quality_score is None:
+        data_quality_score = _estimate_data_quality(data)
+    if not data_quality_label:
+        data_quality_label = _quality_label(int(data_quality_score or 0))
 
-    # ---------- 1. 표지 ----------
-    today = datetime.date.today().strftime("%Y-%m-%d")
-
-    elements.append(Spacer(1, 60))
-    elements.append(Paragraph("PMF 진단 리포트", title_style))
-    elements.append(Paragraph(startup_name, subtitle_style))
-    elements.append(Spacer(1, 20))
-
-    cover_subtitle = (
-        "Global Scale-up Accelerator, HAND Partners<br/>"
-        "PMF Studio 진단 프레임워크 기반 분석 리포트"
-    )
-    elements.append(Paragraph(cover_subtitle, cover_body_style))
-    elements.append(Paragraph(today, small_style))
-    elements.append(Spacer(1, 30))
-
-    intro_text = (
-        "이 리포트는 HAND PARTNERS의 PMF Studio를 통해 수집된 정보를 바탕으로, "
-        "현재 스타트업의 Problem–Solution Fit 및 PMF 신호를 정량·정성적으로 해석한 결과입니다. "
-        "각 섹션은 문제–고객–솔루션–트랙션–Go-to-Market 관점에서 핵심 인사이트를 제공하며, "
-        "다음 단계 실행을 위한 실질적인 논의 기반으로 활용할 수 있습니다."
-    )
-    elements.append(Paragraph(intro_text, cover_body_style))
-    elements.append(PageBreak())
-
-    # ---------- 1. 표지 ----------
+    # ---------- 1. 표지 (한 번만) ----------
     today = datetime.date.today().strftime("%Y-%m-%d")
 
     elements.append(Spacer(1, 60))
@@ -353,7 +329,13 @@ def generate_pmf_report_v2(data, output_path):
 
     # 데이터 품질 표시 문구
     if data_quality_score is not None and data_quality_label:
-        quality_line = f"{data_quality_label} (Data Quality Score: {data_quality_score}/100)"
+        if data_quality_score_llm is not None:
+            quality_line = (
+                f"{data_quality_label} "
+                f"(룰 기반 {data_quality_score}/100, LLM 평가 {data_quality_score_llm}/100)"
+            )
+        else:
+            quality_line = f"{data_quality_label} (Data Quality Score: {data_quality_score}/100)"
     else:
         quality_line = "-"
 
@@ -424,7 +406,6 @@ def generate_pmf_report_v2(data, output_path):
     retention_signal = data.get("retention_signal", "")
     revenue_status = data.get("revenue_status", "")
     key_feedback = data.get("key_feedback", "")
-    ai_summary = data.get("ai_summary", "")
 
     section4_html = f"""
     <b>시장/기회 관련 정보</b><br/>{_value_or_dash(market_size)}<br/><br/>
@@ -433,8 +414,7 @@ def generate_pmf_report_v2(data, output_path):
     - 재사용/활성 사용자 신호: {_value_or_dash(repeat_usage)}<br/>
     - 리텐션/이탈 관련 신호: {_value_or_dash(retention_signal)}<br/>
     - 매출/유료 전환 현황: {_value_or_dash(revenue_status)}<br/><br/>
-    <b>핵심 고객 피드백</b><br/>{_value_or_dash(key_feedback)}<br/><br/>
-    <b>AI 기반 PMF 인사이트 요약</b><br/>{_value_or_dash(ai_summary)}
+    <b>핵심 고객 피드백</b><br/>{_value_or_dash(key_feedback)}
     """
     elements.append(Paragraph(section4_html, body_style))
     elements.append(Spacer(1, 10))
@@ -456,13 +436,14 @@ def generate_pmf_report_v2(data, output_path):
     elements.append(Paragraph(section5_html, body_style))
     elements.append(Spacer(1, 10))
 
-    # ---------- 7. 종합 제언 및 다음 스텝 ----------
+    # ---------- 7. 종합 제언 및 다음 스텝 + AI 인사이트 (리포트 마지막) ----------
     elements.append(Paragraph("6. 종합 제언 및 다음 스텝", section_title_style))
 
     summary = data.get("summary", "")
     recommendations = data.get("recommendations", "")
     next_experiments = data.get("next_experiments", "")
     biggest_risk = data.get("biggest_risk", "")
+    ai_summary = data.get("ai_summary", "")
 
     # 1) 사용자가 summary/recommendations를 직접 넣은 경우 우선 사용
     if summary or recommendations:
@@ -477,6 +458,7 @@ def generate_pmf_report_v2(data, output_path):
 
     section6_html = f"""
     <b>HAND PARTNERS PMF 종합 코멘트</b><br/>{summary_text}<br/><br/>
+    <b>AI 기반 PMF 인사이트 요약</b><br/>{_value_or_dash(ai_summary)}<br/><br/>
     <b>다음 4주 핵심 실행/실험 계획</b><br/>{_value_or_dash(next_experiments)}<br/><br/>
     <b>가장 큰 리스크/검증해야 할 가설</b><br/>{_value_or_dash(biggest_risk)}
     """

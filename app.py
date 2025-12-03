@@ -10,7 +10,7 @@ from token_validation import validate_token_simple
 from pmf_score_engine import build_scores_from_raw, calculate_pmf_score
 from pdf_template_kor_v2 import generate_pmf_report_v2
 from email_reporter import send_pmf_report_email
-from pmf_ai_feedback_gemini import generate_ai_summary, estimate_answer_quality
+# pmf_ai_feedback_gemini 는 선택적으로 사용: generate_ai_summary 를 내부에서 try-import로 호출
 
 import sentry_sdk
 from sentry_sdk.integrations.flask import FlaskIntegration
@@ -53,17 +53,6 @@ def _require_valid_token_or_403(req):
         return False, info
     return True, info
 
-
-# =========================
-# 1) 데이터 품질 점수 & PMF 점수 보정 로직
-# =========================
-_QUALITY_FIELDS = [
-    "problem",
-    "solution",
-    "target",
-    "pmf_pull_signal",
-    "key_feedback",
-]
 
 # =========================
 # 데이터 품질 평가 유틸
@@ -137,59 +126,6 @@ def assess_data_quality(raw: dict):
     return score, label
 
 
-def _estimate_data_quality(raw: dict) -> int:
-    """
-    각 핵심 필드 길이/내용을 보고 0~100 점으로 '답변 성의' 점수를 추정.
-    - 거의 비어 있거나, 숫자만 잔뜩 있으면 낮게.
-    - 3~5문장 정도의 자연스러운 서술이면 꽤 높게.
-    """
-    total = 0.0
-    used = 0
-
-    for field in _QUALITY_FIELDS:
-        txt = str(raw.get(field, "") or "").strip()
-        if not txt:
-            continue
-
-        used += 1
-        length = len(txt)
-        score = 0.0
-
-        # 길이 기준 (대충 감각적 기준)
-        if length >= 200:
-            score += 45
-        elif length >= 120:
-            score += 40
-        elif length >= 60:
-            score += 32
-        elif length >= 30:
-            score += 25
-        elif length >= 10:
-            score += 15
-        else:
-            score += 5
-
-        # 숫자만 잔뜩 있는 것 패널티
-        digits = sum(c.isdigit() for c in txt)
-        letters = sum(c.isalpha() for c in txt)
-        if digits > 0 and digits >= letters * 2:
-            score -= 25
-
-        # 동일 문장 반복 느낌(아주 단순)
-        unique_tokens = len(set(txt.split()))
-        total_tokens = len(txt.split())
-        if total_tokens > 0 and unique_tokens / max(total_tokens, 1) < 0.4:
-            score -= 10
-
-        total += max(score, 0.0)
-
-    if used == 0:
-        return 0
-
-    raw_score = total / used
-    return max(0, min(100, int(raw_score)))
-
-
 def _adjust_pmf_score(raw_score, raw_stage, quality_score: int):
     """
     데이터 품질이 낮으면 PMF 점수를 강하게 눌러서
@@ -221,7 +157,7 @@ def _adjust_pmf_score(raw_score, raw_stage, quality_score: int):
 
 
 # =========================
-# 2) OpenAI 기반 요약/코멘트 생성 (선택)
+# OpenAI 기반 요약/코멘트 생성 (선택)
 # =========================
 def _llm_pmf_feedback(raw: dict, score, stage, quality_score: int):
     """
@@ -230,25 +166,25 @@ def _llm_pmf_feedback(raw: dict, score, stage, quality_score: int):
     - summary (요약 코멘트)
     - recommendations (전략 제언)
     - next_experiments (다음 4주 실험)
+    - biggest_risk_comment (리스크에 대한 멘토 코멘트)
     을 JSON 으로 받아오는 함수.
 
     OPENAI_API_KEY 가 없거나, openai 패키지가 없으면 None을 리턴하고 건너뜀.
     """
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     if not api_key:
-        return None, None, None, None
+        return None, None, None, None, None
 
     try:
         from openai import OpenAI
     except ImportError:
         app.logger.error("openai 패키지가 설치되어 있지 않습니다. LLM 기반 피드백을 건너뜁니다.")
-        return None, None, None, None
+        return None, None, None, None, None
 
     client = OpenAI(api_key=api_key)
 
     import textwrap
 
-    # raw 전체를 그대로 넣으면 길어질 수 있어서, 핵심 필드만 추려서 전달
     condensed = {
         "startup_name": raw.get("startup_name", ""),
         "industry": raw.get("industry", ""),
@@ -270,11 +206,12 @@ def _llm_pmf_feedback(raw: dict, score, stage, quality_score: int):
     너는 세계적인 스타트업 투자자이자 액셀러레이터 파트너다.
     아래는 한 스타트업이 PMF 진단 폼에 작성한 핵심 내용이다.
 
-    이 정보를 바탕으로 다음 네 가지를 한국어로, 세계적인 창업 전문 멘토 톤으로 작성해라.
+    이 정보를 바탕으로 다음 다섯 가지를 한국어로, 세계적인 창업 전문 멘토 톤으로 작성해라.
     - quality_score_llm: 입력의 성의/구체성을 0~100 사이 점수로 평가 (정수)
     - summary: PMF 관점 요약 (4~7문장, 너무 길지 않게)
     - recommendations: 향후 3~5개월 전략 제언 (3~5문장)
     - next_experiments: 다음 4주 동안 실행하면 좋은 실험 3~5개를 한 단락으로 정리
+    - biggest_risk_comment: 가장 큰 리스크/핵심 가설에 대한 멘토 코멘트 (2~4문장)
 
     출력은 반드시 아래 JSON 형식 하나로만 반환해라.
 
@@ -282,7 +219,8 @@ def _llm_pmf_feedback(raw: dict, score, stage, quality_score: int):
       "quality_score_llm": 0~100 정수,
       "summary": "텍스트",
       "recommendations": "텍스트",
-      "next_experiments": "텍스트"
+      "next_experiments": "텍스트",
+      "biggest_risk_comment": "텍스트"
     }}
 
     --- 점수 정보 ---
@@ -318,10 +256,11 @@ def _llm_pmf_feedback(raw: dict, score, stage, quality_score: int):
         summary = obj.get("summary")
         recommendations = obj.get("recommendations")
         next_experiments = obj.get("next_experiments")
-        return q_llm, summary, recommendations, next_experiments
+        biggest_risk_comment = obj.get("biggest_risk_comment")
+        return q_llm, summary, recommendations, next_experiments, biggest_risk_comment
     except Exception as e:
         app.logger.error(f"LLM PMF feedback failed: {e}")
-        return None, None, None, None
+        return None, None, None, None, None
 
 
 # =========================
@@ -396,8 +335,8 @@ def _build_pmf_pdf_data(raw: dict):
     raw 입력을 받아:
     - PMF score 계산
     - 데이터 품질 평가
-    - 점수 표시 모드(pmf_score_mode) 결정
-    - AI 요약(ai_summary)까지 포함한 pdf_data 구성
+    - 점수 보정 및 표시 모드(pmf_score_mode) 결정
+    - Gemini/LLM 요약(ai_summary, summary, recommendations 등)까지 포함한 pdf_data 구성
     """
 
     # 1) 점수 계산 (기존 로직 그대로 활용)
@@ -410,16 +349,13 @@ def _build_pmf_pdf_data(raw: dict):
     # 2) 데이터 품질 평가
     data_quality_score, data_quality_label = assess_data_quality(raw)
 
-    # 3) 점수 모드/노트 결정
+    # 3) 점수 보정
+    adjusted_score, adjusted_stage = _adjust_pmf_score(score, stage, data_quality_score)
+
+    # 4) 점수 모드/노트 & 표시용 점수 결정
     pmf_score_mode = "normal"      # "normal" | "reference" | "invalid"
     pmf_score_note = ""
     pmf_score_for_display = None
-
-    try:
-        s_float = float(score)
-        pmf_score_for_display = round(s_float, 1)
-    except Exception:
-        pmf_score_for_display = score
 
     if data_quality_score < 25:
         # 거의 아무것도 안 썼거나, asdf 수준의 응답
@@ -431,20 +367,64 @@ def _build_pmf_pdf_data(raw: dict):
             "문제·고객·솔루션·트랙션 항목을 실제 사례와 숫자를 포함해 더 구체적으로 작성하신 뒤 "
             "다시 진단해 보시길 권장드립니다."
         )
-    elif data_quality_score < 60:
-        # 어느 정도는 썼지만, 완전히 신뢰하기엔 부족한 케이스
-        pmf_score_mode = "reference"
-        pmf_score_note = (
-            "입력 데이터가 부분적으로 부족하여, 본 PMF 점수와 단계는 참고용으로 보시는 것을 권장드립니다. "
-            "각 섹션에 구체적인 고객 사례와 정량 지표를 보완하면 더 정밀한 진단이 가능합니다."
-        )
     else:
-        # 충분히 성실하게 작성된 응답
-        pmf_score_mode = "normal"
-        # pmf_score_note는 빈 문자열(필요 시 나중에 추가 가능)
+        # 보정된 점수를 표시용으로 사용
+        try:
+            s_float = float(adjusted_score)
+            pmf_score_for_display = round(s_float, 1)
+        except Exception:
+            pmf_score_for_display = adjusted_score
 
-    # 4) AI 요약(선택) – pmf_score_mode에 따라 다르게
-    ai_summary = raw.get("ai_summary", "").strip()
+        stage = adjusted_stage
+
+        if data_quality_score < 60:
+            # 어느 정도는 썼지만, 완전히 신뢰하기엔 부족한 케이스
+            pmf_score_mode = "reference"
+            pmf_score_note = (
+                "입력 데이터가 부분적으로 부족하여, 본 PMF 점수와 단계는 참고용으로 보시는 것을 권장드립니다. "
+                "각 섹션에 구체적인 고객 사례와 정량 지표를 보완하면 더 정밀한 진단이 가능합니다."
+            )
+        else:
+            # 충분히 성실하게 작성된 응답
+            pmf_score_mode = "normal"
+
+    # 5) LLM 기반 종합 피드백 (선택: OPENAI_API_KEY 있을 때만)
+    summary_raw = (raw.get("summary") or "").strip()
+    recommendations_raw = (raw.get("recommendations") or "").strip()
+    next_experiments_raw = (raw.get("next_experiments") or "").strip()
+    biggest_risk_raw = (raw.get("biggest_risk") or "").strip()
+
+    llm_quality = None
+    summary_llm = None
+    recommendations_llm = None
+    next_experiments_llm = None
+    biggest_risk_comment_llm = None
+
+    if pmf_score_mode != "invalid":
+        # invalid 모드일 때는 LLM 호출도 굳이 하지 않음
+        try:
+            (
+                llm_quality,
+                summary_llm,
+                recommendations_llm,
+                next_experiments_llm,
+                biggest_risk_comment_llm,
+            ) = _llm_pmf_feedback(raw, pmf_score_raw, validation_stage_raw, data_quality_score)
+        except Exception as e:
+            app.logger.error(f"LLM feedback call failed: {e}")
+
+    # 사용자가 직접 쓴 내용이 있으면 우선 사용, 없으면 LLM 결과 활용
+    summary_final = summary_raw or (summary_llm or "")
+    recommendations_final = recommendations_raw or (recommendations_llm or "")
+    next_experiments_final = next_experiments_raw or (next_experiments_llm or "")
+    # 가장 큰 리스크 항목은, 사용자가 쓴 내용이 중심이지만 LLM 코멘트를 덧붙인다(있다면)
+    if biggest_risk_raw and biggest_risk_comment_llm:
+        biggest_risk_final = f"{biggest_risk_raw}\n\n[멘토 코멘트]\n{biggest_risk_comment_llm}"
+    else:
+        biggest_risk_final = biggest_risk_raw or (biggest_risk_comment_llm or "")
+
+    # 6) AI 요약(선택) – pmf_score_mode에 따라 다르게 (Gemini 등)
+    ai_summary = (raw.get("ai_summary") or "").strip()
 
     if not ai_summary:
         # invalid 모드에서는 외부 모델 호출 없이 안내 문구만
@@ -455,9 +435,9 @@ def _build_pmf_pdf_data(raw: dict):
                 "이상으로 작성해 주시면, 훨씬 정교한 인사이트를 제공해 드릴 수 있습니다."
             )
         else:
-            # normal / reference 모드에서만 외부 AI 호출을 시도
+            # normal / reference 모드에서만 외부 AI 요약 호출을 시도
             try:
-                from pmf_ai_feedback_gemini import generate_ai_summary  # 없으면 ImportError
+                from pmf_ai_feedback_gemini import generate_ai_summary  # 선택적 의존성
 
                 ai_summary = generate_ai_summary(
                     raw=raw,
@@ -471,7 +451,7 @@ def _build_pmf_pdf_data(raw: dict):
                 app.logger.error(f"AI summary generation failed: {e}")
                 ai_summary = ""
 
-    # 5) PDF에 넘길 데이터 구성
+    # 7) PDF에 넘길 데이터 구성
     pdf_data = {
         "startup_name": raw.get("startup_name", "N/A"),
 
@@ -484,6 +464,7 @@ def _build_pmf_pdf_data(raw: dict):
         "validation_stage_raw": validation_stage_raw,
         "data_quality_score": data_quality_score,
         "data_quality_label": data_quality_label,
+        "data_quality_score_llm": llm_quality,
 
         # 기본 정보
         "contact_email": raw.get("contact_email", ""),
@@ -525,13 +506,13 @@ def _build_pmf_pdf_data(raw: dict):
         "referral_signal": raw.get("referral_signal", ""),
 
         # 종합 요약/제언 + AI 인사이트
-        "summary": raw.get("summary", ""),
-        "recommendations": raw.get("recommendations", ""),
+        "summary": summary_final,
+        "recommendations": recommendations_final,
         "ai_summary": ai_summary,
 
-        # 다음 실행
-        "next_experiments": raw.get("next_experiments", ""),
-        "biggest_risk": raw.get("biggest_risk", ""),
+        # 다음 실행 / 리스크
+        "next_experiments": next_experiments_final,
+        "biggest_risk": biggest_risk_final,
     }
 
     return (
@@ -545,6 +526,7 @@ def _build_pmf_pdf_data(raw: dict):
         pmf_score_mode,
         pmf_score_note,
     )
+
 
 def _generate_report_and_optionally_store(raw):
     """
@@ -619,6 +601,7 @@ def _generate_report_and_optionally_store(raw):
     _store_report(report_record)
 
     return pmf_score_for_display, stage, None, email_sent
+
 
 def _generate_report_for_download(raw):
     """
