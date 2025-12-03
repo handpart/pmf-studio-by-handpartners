@@ -443,24 +443,52 @@ def generate_pmf_report_v2(data, output_path):
     recommendations = data.get("recommendations", "")
     next_experiments = data.get("next_experiments", "")
     biggest_risk = data.get("biggest_risk", "")
-    ai_summary = data.get("ai_summary", "")
+    dq = data.get("data_quality_score", None)
 
     # 1) 사용자가 summary/recommendations를 직접 넣은 경우 우선 사용
     if summary or recommendations:
         summary_text = summary or recommendations
     else:
-        # 2) 비어 있으면 PMF 점수/단계/품질을 기반으로 규칙 기반 코멘트 생성
-        summary_text = _build_rule_based_summary(
-            data.get("pmf_score_raw"),
-            data.get("validation_stage_raw"),
-            data.get("data_quality_score"),
-        )
+        # 데이터 품질에 따라 완전히 다른 톤
+        if dq is not None and dq < 40:
+            summary_text = (
+                "이번 응답은 다수 항목이 아주 짧거나 형식적으로만 작성되어 있어, "
+                "PMF 단계에 대한 정밀한 판단을 내리기 어려운 상태입니다. "
+                "이 리포트는 '어떤 항목을 더 채워야 하는지'를 알려주는 참고용으로 활용하시고, "
+                "문제 정의·타겟 고객·솔루션·트랙션·다음 실행 계획을 실제 사례와 숫자를 포함해 "
+                "각각 최소 3~5문장 이상으로 보완하신 뒤 다시 진단을 받아 보시길 권장드립니다."
+            )
+        else:
+            # 품질이 어느 정도 이상이면 규칙 기반 코멘트 사용
+            summary_text = _build_rule_based_summary(
+                data.get("pmf_score_raw"),
+                data.get("validation_stage_raw"),
+                dq,
+            )
+
+# ---------- 8. HAND PARTNERS AI 기반 PMF 인사이트 ----------
+    ai_summary = (data.get("ai_summary") or "").strip()
+    if ai_summary:
+        # 필요하면 여기서 PageBreak()를 넣어도 좋음
+        elements.append(PageBreak())
+        elements.append(Paragraph("7. HAND PARTNERS AI 기반 PMF 인사이트", section_title_style))
+
+        # Gemini가 빈 줄(2줄) 기준으로 블록을 나누도록 시켰으니, 그 기준으로 나눔
+        blocks = [b.strip() for b in ai_summary.split("\n\n") if b.strip()]
+        if not blocks:
+            blocks = [ai_summary]
+
+        for b in blocks:
+            # 문단 안 개행은 <br/>로 변환
+            b_html = b.replace("\n", "<br/>")
+            elements.append(Paragraph(b_html, body_style))
+            elements.append(Spacer(1, 6))
+
 
     section6_html = f"""
-    <b>HAND PARTNERS PMF 종합 코멘트</b><br/>{summary_text}<br/><br/>
-    <b>AI 기반 PMF 인사이트 요약</b><br/>{_value_or_dash(ai_summary)}<br/><br/>
     <b>다음 4주 핵심 실행/실험 계획</b><br/>{_value_or_dash(next_experiments)}<br/><br/>
     <b>가장 큰 리스크/검증해야 할 가설</b><br/>{_value_or_dash(biggest_risk)}
+    <b>HAND PARTNERS PMF 종합 코멘트</b><br/>{summary_text}<br/><br/>
     """
     elements.append(Paragraph(section6_html, body_style))
 

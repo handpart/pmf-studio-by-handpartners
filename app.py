@@ -377,26 +377,27 @@ def _build_pmf_pdf_data(raw: dict):
         pmf_score_for_display = score
 
     # 데이터 품질 수준에 따른 모드 결정
-    if data_quality_score < 25:
+    if data_quality_score < 40:
         # 거의 아무것도 안 썼거나, asdf 수준의 응답
         pmf_score_mode = "invalid"
         pmf_score_for_display = None  # 점수 숫자를 숨김
-        stage = "데이터 부족(판정 불가)"
+        stage = "데이터 부족 / 진단 불가"
         pmf_score_note = (
-            "입력된 내용이 너무 짧거나 형식적이어서, 이번 리포트에서는 PMF 점수를 산출하지 않았습니다. "
-            "문제·고객·솔루션·트랙션 항목을 실제 사례와 숫자를 포함해 더 구체적으로 작성하신 뒤 "
-            "다시 진단해 보시길 권장드립니다."
+            "입력된 내용의 분량이나 구체성이 매우 부족하여, 이번 리포트에서는 PMF 점수를 산출하지 않았습니다. "
+            "문제·고객·솔루션·트랙션 항목을 실제 사례와 숫자를 포함해 "
+            "각각 최소 3~5문장 이상으로 작성하신 뒤 다시 진단해 보시길 권장드립니다."
         )
-    elif data_quality_score < 60:
+    elif data_quality_score < 70:
         # 어느 정도는 썼지만, 완전히 신뢰하기엔 부족한 케이스
         pmf_score_mode = "reference"
         pmf_score_note = (
-            "입력 데이터가 부분적으로 부족하여, 본 PMF 점수와 단계는 참고용으로 보시는 것을 권장드립니다. "
-            "각 섹션에 구체적인 고객 사례와 정량 지표를 보완하면 더 정밀한 진단이 가능합니다."
+            "일부 항목은 잘 작성해 주셨지만, 몇몇 핵심 정보가 부족하여 정확히 진단하기가 어렵습니다. "
+            "본 PMF 점수와 단계는 참고용으로 보시는 것을 추천드립니다."
         )
     else:
         # 충분히 성실하게 작성된 응답
         pmf_score_mode = "normal"
+        pmf_score_note = ""
         # pmf_score_note는 빈 문자열 (필요 시 이후에 추가 가능)
 
     # 4) AI 요약(선택) – pmf_score_mode / data_quality에 따라 다르게
