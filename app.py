@@ -100,6 +100,19 @@ def assess_data_quality(raw: dict):
         elif lower in ("asdf", "qwer", "test", "tt", "11", "1234", "123", "1111"):
             garbage_like += 1
 
+        # ★ 추가: 의미 없는 반복 패턴 감지 (예: asdfasdf, qqqqq)
+        unique_chars = len(set(lower))
+        if unique_chars <= 4 and len(v) <= 12:
+            # 알파벳 몇 개만 반복된 짧은 문자열이면 garbage로 취급
+            garbage_like += 1
+
+        # ★ 추가: 단어 다양성이 너무 낮은 경우 (예: 같은 단어만 반복)
+        tokens = lower.split()
+        if len(tokens) > 0:
+            unique_tokens = len(set(tokens))
+            if unique_tokens / max(len(tokens), 1) < 0.4 and len(tokens) <= 5:
+                garbage_like += 1
+
     if total == 0:
         return 0, "매우 낮음"
 
@@ -350,7 +363,14 @@ def _build_pmf_pdf_data(raw: dict):
     data_quality_score, data_quality_label = assess_data_quality(raw)
 
     # 3) 점수 보정
-    adjusted_score, adjusted_stage = _adjust_pmf_score(score, stage, data_quality_score)
+    adjusted_score, adjusted_stage = _adjust_pmf_score(
+        pmf_score_raw,
+        validation_stage_raw,
+        data_quality_score,
+    )
+
+    pmf_score_for_display = adjusted_score
+    stage = adjusted_stage
 
     # 4) 점수 모드/노트 & 표시용 점수 결정
     pmf_score_mode = "normal"      # "normal" | "reference" | "invalid"

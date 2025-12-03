@@ -201,6 +201,7 @@ def generate_ai_summary(
     """
     api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
     if not api_key or genai is None:
+        logger.warning("Gemini API not configured or google-genai not installed.")
         # 설정 안 되어 있으면 그냥 빈 문자열 -> PDF에서는 기본 룰 기반 문구만 사용
         return ""
 
@@ -240,6 +241,7 @@ def generate_ai_summary(
         )
         text = getattr(resp, "text", "") or ""
         return text.strip()
-    except Exception:
+    except Exception as e:
+        logger.error(f"Gemini summary error: {e}")
         # 에러가 나더라도 서비스 전체가 죽지 않도록 빈 문자열 반환
         return ""
