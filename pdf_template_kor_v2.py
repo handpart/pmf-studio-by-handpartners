@@ -38,12 +38,12 @@ BODY_FONT = "NanumGothic"        # 본문
 
 
 # ---------------------------
-# (옵션) 데이터 품질 추정 – app.py에서 넘어오지 않을 때만 백업용으로 사용
+# (백업용) 데이터 품질 추정 휴리스틱
+#  - app.py에서 data_quality_score/label을 안 넘겨줄 때만 사용
 # ---------------------------
 def _estimate_data_quality(data: dict) -> int:
     """
     텍스트 기반 핵심 필드를 간단히 스코어링해서 0~100 사이의 데이터 품질 점수로 환산.
-    app.py에서 data_quality_score가 넘어오지 않는 옛 버전과의 호환용.
     """
     key_fields = [
         "problem",
@@ -73,7 +73,7 @@ def _estimate_data_quality(data: dict) -> int:
         elif length >= 15:
             score += 25
         else:
-            score += 10  # 한두 문장이라도 있으면 최소 점수
+            score += 10
 
         # 숫자 비율이 너무 높으면 감점
         digits = sum(c.isdigit() for c in txt)
@@ -203,9 +203,9 @@ def generate_pmf_report_v2(data, output_path):
         "title_style",
         parent=styles["Heading1"],
         fontName=TITLE_FONT,
-        fontSize=28,       # 표지 타이틀 크게
+        fontSize=28,
         leading=34,
-        alignment=1,       # center
+        alignment=1,
         textColor=colors.HexColor("#1F4E79"),
         spaceAfter=24,
     )
@@ -236,7 +236,7 @@ def generate_pmf_report_v2(data, output_path):
         "section_title_style",
         parent=styles["Heading2"],
         fontName=HEADER_FONT,
-        fontSize=13,      # 섹션 제목은 본문보다 크게
+        fontSize=13,
         leading=18,
         textColor=colors.white,
         backColor=colors.HexColor("#2D89EF"),
@@ -251,7 +251,7 @@ def generate_pmf_report_v2(data, output_path):
         "body_style",
         parent=styles["Normal"],
         fontName=BODY_FONT,
-        fontSize=10,      # 본문: 가독성 좋은 크기
+        fontSize=10,
         leading=14,
         textColor=colors.HexColor("#222222"),
     )
@@ -275,7 +275,12 @@ def generate_pmf_report_v2(data, output_path):
 
     data_quality_score = data.get("data_quality_score", None)
     data_quality_label = data.get("data_quality_label", None)
-    data_quality_score_llm = data.get("data_quality_score_llm", None)
+
+    # app.py에서 품질 정보를 넘겨주지 않은 경우에만 백업 휴리스틱 사용
+    if data_quality_score is None or not data_quality_label:
+        backup_q = _estimate_data_quality(data)
+        data_quality_score = backup_q
+        data_quality_label = _quality_label(backup_q)
 
     startup_name = data.get("startup_name", "N/A")
     industry = data.get("industry", "")
@@ -284,13 +289,7 @@ def generate_pmf_report_v2(data, output_path):
     team_size = data.get("team_size", "")
     contact_email = data.get("contact_email", "")
 
-    # ---------- (백업) app.py에서 품질 점수가 안 넘어온 옛 데이터일 경우 계산 ----------
-    if data_quality_score is None:
-        data_quality_score = _estimate_data_quality(data)
-    if not data_quality_label:
-        data_quality_label = _quality_label(int(data_quality_score or 0))
-
-    # ---------- 1. 표지 (한 번만) ----------
+    # ---------- 1. 표지 ----------
     today = datetime.date.today().strftime("%Y-%m-%d")
 
     elements.append(Spacer(1, 60))
@@ -329,13 +328,7 @@ def generate_pmf_report_v2(data, output_path):
 
     # 데이터 품질 표시 문구
     if data_quality_score is not None and data_quality_label:
-        if data_quality_score_llm is not None:
-            quality_line = (
-                f"{data_quality_label} "
-                f"(룰 기반 {data_quality_score}/100, LLM 평가 {data_quality_score_llm}/100)"
-            )
-        else:
-            quality_line = f"{data_quality_label} (Data Quality Score: {data_quality_score}/100)"
+        quality_line = f"{data_quality_label} (Data Quality Score: {data_quality_score}/100)"
     else:
         quality_line = "-"
 
@@ -436,61 +429,47 @@ def generate_pmf_report_v2(data, output_path):
     elements.append(Paragraph(section5_html, body_style))
     elements.append(Spacer(1, 10))
 
-    # ---------- 7. 종합 제언 및 다음 스텝 + AI 인사이트 (리포트 마지막) ----------
-    elements.append(Paragraph("6. 종합 제언 및 다음 스텝", section_title_style))
+    # ---------- 7. AI 기반 PMF 인사이트 요약 ----------
+    elements.append(Paragraph("6. AI 기반 PMF 인사이트 요약", section_title_style))
+
+    ai_summary = data.get("ai_summary", "")
+    if ai_summary:
+        # 줄바꿈을 PDF용 <br/>로 변환
+        ai_html = ai_summary.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br/>")
+    else:
+        ai_html = "-"
+
+    section6_html = f"""
+    <b>Gemini 기반 요약 코멘트</b><br/>{ai_html}
+    """
+    elements.append(Paragraph(section6_html, body_style))
+    elements.append(Spacer(1, 10))
+
+    # ---------- 8. 종합 제언 및 다음 스텝 ----------
+    elements.append(Paragraph("7. HAND PARTNERS PMF 종합 코멘트 및 다음 스텝", section_title_style))
 
     summary = data.get("summary", "")
     recommendations = data.get("recommendations", "")
     next_experiments = data.get("next_experiments", "")
     biggest_risk = data.get("biggest_risk", "")
-    dq = data.get("data_quality_score", None)
 
     # 1) 사용자가 summary/recommendations를 직접 넣은 경우 우선 사용
     if summary or recommendations:
         summary_text = summary or recommendations
     else:
-        # 데이터 품질에 따라 완전히 다른 톤
-        if dq is not None and dq < 40:
-            summary_text = (
-                "이번 응답은 다수 항목이 아주 짧거나 형식적으로만 작성되어 있어, "
-                "PMF 단계에 대한 정밀한 판단을 내리기 어려운 상태입니다. "
-                "이 리포트는 '어떤 항목을 더 채워야 하는지'를 알려주는 참고용으로 활용하시고, "
-                "문제 정의·타겟 고객·솔루션·트랙션·다음 실행 계획을 실제 사례와 숫자를 포함해 "
-                "각각 최소 3~5문장 이상으로 보완하신 뒤 다시 진단을 받아 보시길 권장드립니다."
-            )
-        else:
-            # 품질이 어느 정도 이상이면 규칙 기반 코멘트 사용
-            summary_text = _build_rule_based_summary(
-                data.get("pmf_score_raw"),
-                data.get("validation_stage_raw"),
-                dq,
-            )
+        # 2) 비어 있으면 PMF 점수/단계/품질을 기반으로 규칙 기반 코멘트 생성
+        summary_text = _build_rule_based_summary(
+            data.get("pmf_score_raw"),
+            data.get("validation_stage_raw"),
+            data_quality_score,
+        )
 
-# ---------- 8. HAND PARTNERS AI 기반 PMF 인사이트 ----------
-    ai_summary = (data.get("ai_summary") or "").strip()
-    if ai_summary:
-        # 필요하면 여기서 PageBreak()를 넣어도 좋음
-        elements.append(PageBreak())
-        elements.append(Paragraph("7. HAND PARTNERS AI 기반 PMF 인사이트", section_title_style))
-
-        # Gemini가 빈 줄(2줄) 기준으로 블록을 나누도록 시켰으니, 그 기준으로 나눔
-        blocks = [b.strip() for b in ai_summary.split("\n\n") if b.strip()]
-        if not blocks:
-            blocks = [ai_summary]
-
-        for b in blocks:
-            # 문단 안 개행은 <br/>로 변환
-            b_html = b.replace("\n", "<br/>")
-            elements.append(Paragraph(b_html, body_style))
-            elements.append(Spacer(1, 6))
-
-
-    section6_html = f"""
+    section7_html = f"""
     <b>다음 4주 핵심 실행/실험 계획</b><br/>{_value_or_dash(next_experiments)}<br/><br/>
     <b>가장 큰 리스크/검증해야 할 가설</b><br/>{_value_or_dash(biggest_risk)}
     <b>HAND PARTNERS PMF 종합 코멘트</b><br/>{summary_text}<br/><br/>
     """
-    elements.append(Paragraph(section6_html, body_style))
+    elements.append(Paragraph(section7_html, body_style))
 
     # ---------- 푸터 ----------
     def footer(canvas, doc_):

@@ -62,10 +62,9 @@ def _estimate_answer_quality_internal(raw: dict) -> float:
 
 def estimate_answer_quality(raw: dict) -> dict:
     """
-    - 0~1 비율
-    - 0~100 점수
+    - 0~1 비율 (quality_ratio)
+    - 0~100 점수 (quality_score)
     - 라벨(매우 낮음/낮음/보통/높음)
-    을 함께 반환.
     """
     ratio = _estimate_answer_quality_internal(raw)
     score_100 = int(round(ratio * 100))
@@ -90,37 +89,31 @@ def _build_prompt(
     raw: dict,
     pmf_score,
     pmf_stage: str,
-    quality_ratio: float,
     data_quality_score: int | None,
     mode: str,
+    quality_ratio: float,
 ) -> str:
     """
     Gemini에게 넘길 프롬프트 생성.
     HAND PARTNERS의 PMF Studio 멘토가 쓴 것 같은 톤으로 요청.
     """
-
     def g(key: str) -> str:
         return (raw.get(key) or "").strip()
 
-    dq_str = (
-        f"{data_quality_score}/100"
-        if data_quality_score is not None
-        else "N/A"
-    )
+    dq_text = "N/A" if data_quality_score is None else f"{data_quality_score}/100"
 
     prompt = f"""
-당신은 HAND PARTNERS의 파트너이자 세계적인 권위가 있는 스타트업 투자자입니다.
-아래 정보는 한 스타트업이 PMF Studio 진단 폼에 입력한 내용과 내부 평가 결과입니다.
+당신은 HAND PARTNERS의 파트너이자 세계적인 초기 스타트업 투자자입니다.
+지금부터 한 스타트업의 PMF 진단 결과와 설문 응답을 요약해서,
+창업자가 실제로 액션을 취할 수 있는 피드백을 한국어로 작성해 주세요.
 
-이 정보를 바탕으로, 창업자가 실제로 다음 4~12주 동안 실행에 옮길 수 있는
-실질적인 PMF 관점 피드백을 한국어로 작성해 주세요.
-
---- 내부 진단 정보 ---
-- PMF 점수(보정 전): {pmf_score}
-- PMF 단계(보정 전): {pmf_stage}
-- 응답 성실도(텍스트 기반 추정, 0~1): {quality_ratio:.2f}
-- 데이터 품질 점수(룰 기반, 0~100): {dq_str}
-- 점수 모드: {mode}   # normal | reference | invalid
+--- 시스템 정보 ---
+- 프로그램: PMF Studio by HAND PARTNERS
+- PMF 점수(내부 계산 값): {pmf_score}
+- PMF 단계(내부 계산 값): {pmf_stage}
+- 데이터 품질 점수(룰 기반 0~100): {dq_text}
+- 응답 성실도(텍스트 길이/패턴 기반 0~1): {quality_ratio:.2f}
+- 현재 점수 모드: {mode}
 
 --- 스타트업 개요 ---
 - 스타트업 이름: {g("startup_name")}
@@ -159,8 +152,8 @@ def _build_prompt(
 - 추천/바이럴 신호: {g("referral_signal")}
 
 --- 다음 실행 ---
-- 다음 4주 핵심 실험/액션(창업자 입력): {g("next_experiments")}
-- 가장 큰 리스크/가설(창업자 입력): {g("biggest_risk")}
+- 다음 4주 핵심 실험/액션: {g("next_experiments")}
+- 가장 큰 리스크/가설: {g("biggest_risk")}
 
 --- 작성 방식 가이드 ---
 1. 한국어로 아래의 구조마다  A4 1장 내외(약 1,500~2,000자) 분량으로 작성하되, 너무 장황하지 않고 핵심에 집중해 주세요.
@@ -172,51 +165,49 @@ def _build_prompt(
 3. 각 부분 사이는 빈 줄(줄바꿈 2번)로만 구분해 주세요.
 4. 응답이 숫자 위주이거나 정보가 부족해 보이면, 그 사실을 먼저 짧게 지적하고 어떤 항목을 더 구체적으로 써야 하는지 안내해 주세요.
 5. 너무 포장하지 말고, 초기 단계 스타트업을 멘토링하는 투자자의 현실적인 톤을 유지해 주세요.
+"""
     return dedent(prompt)
 
 
 def generate_ai_summary(
     raw: dict,
-    pmf_score=None,
-    pmf_stage: str | None = None,
+    pmf_score,
+    pmf_stage: str,
     data_quality_score: int | None = None,
     mode: str = "normal",
-    **kwargs,
 ) -> str:
     """
     Gemini API를 호출해 HAND PARTNERS 스타일의 PMF 인사이트 요약을 생성.
 
-    app.py 에서는 다음과 같이 호출:
-      generate_ai_summary(
-          raw=raw,
-          pmf_score=pmf_score_raw,
-          pmf_stage=validation_stage_raw,
-          data_quality_score=data_quality_score,
-          mode=pmf_score_mode,
-      )
-
-    - GEMINI_API_KEY 환경변수가 없거나 라이브러리가 없으면 "" 반환 (조용히 패스)
-    - 응답이 너무 부실하면 사람에게 다시 쓰라고 안내하는 메시지 반환
+    - GEMINI_API_KEY가 없거나 라이브러리가 없으면 "" 반환
+    - 입력이 너무 부실하거나 점수 모드가 invalid면,
+      LLM 호출 없이 '더 자세히 써달라'는 안내 문구만 반환
     """
     api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
     if not api_key or genai is None:
-        # 설정 안 되어 있으면 그냥 빈 문자열 -> PDF에서는 기본 룰 기반 문구만 사용
+        # 설정 안 되어 있으면 그냥 빈 문자열 -> PDF에서는 룰 기반/기본 문구만 사용
         return ""
 
-    # 내부 텍스트 기반 성실도 추정(0~1)
+    # 내부 텍스트 기반 품질 추정
     qinfo = estimate_answer_quality(raw)
     quality_ratio = qinfo["quality_ratio"]
+    quality_score_100 = qinfo["quality_score"]
 
-    # 응답이 너무 부실한 경우: 굳이 API 호출 안 하고 안내 문구만
-    if quality_ratio < 0.25 or (data_quality_score is not None and data_quality_score < 25):
+    # data_quality_score가 안 들어온 경우, 텍스트 기반 점수를 그대로 사용
+    dq = data_quality_score if data_quality_score is not None else quality_score_100
+
+    # 매우 부실하거나, 이미 invalid 모드인 경우 LLM 호출 대신 안내 문구만
+    if mode == "invalid" or dq < 40 or quality_ratio < 0.25:
         return (
-            "현재 입력된 내용이 너무 짧거나 숫자 위주라서, 신뢰할 만한 PMF 분석을 하기 어렵습니다. "
-            "특히 아래 항목들을 최소 한두 문장 이상으로 구체적으로 작성해 주세요:\n"
-            "- 문제 정의 / 문제의 강도·빈도\n"
+            "현재 입력된 내용이 너무 짧거나 형식적이어서 신뢰할 만한 PMF 분석을 진행하기 어렵습니다. "
+            "특히 아래 항목들을 실제 고객 사례와 숫자를 포함해 최소 3~5문장 이상으로 보완해 주시면 좋습니다.\n"
+            "- 문제 정의 및 문제의 강도/빈도\n"
             "- 타겟 고객과 Beachhead 고객 설명\n"
             "- 솔루션과 USP(다른 대안과 무엇이 다른지)\n"
-            "- 현재 사용자 수, 재사용/매출과 같은 검증/성과\n"
-            "이 항목들을 보완한 뒤 다시 진단을 실행하시면 훨씬 정확한 피드백을 받으실 수 있습니다."
+            "- 현재 사용자 수, 재사용/리텐션, 매출/유료 전환과 같은 검증/성과\n"
+            "- 향후 4주 동안 실행하려는 실험/액션 계획\n"
+            "위 항목들을 구체적으로 작성하신 뒤 PMF Studio 진단을 다시 실행하시면, "
+            "훨씬 정교한 인사이트와 실행 권고를 받아보실 수 있습니다."
         )
 
     try:
@@ -224,10 +215,10 @@ def generate_ai_summary(
         prompt = _build_prompt(
             raw=raw,
             pmf_score=pmf_score,
-            pmf_stage=pmf_stage or "",
-            quality_ratio=quality_ratio,
-            data_quality_score=data_quality_score,
+            pmf_stage=pmf_stage,
+            data_quality_score=dq,
             mode=mode,
+            quality_ratio=quality_ratio,
         )
         resp = client.models.generate_content(
             model=DEFAULT_MODEL,
