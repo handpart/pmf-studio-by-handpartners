@@ -230,7 +230,7 @@ def generate_pmf_report_v2(data, output_path):
         leading=60,
         alignment=1,  # 왼쪽 정렬 (표지 메인 타이틀)
         textColor=colors.HexColor("#1F4E79"),
-        spaceBefore=100,
+        spaceBefore=90,
         spaceAfter=100,
     )
 
