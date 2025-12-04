@@ -205,7 +205,7 @@ def generate_pmf_report_v2(data, output_path):
         parent=styles["Normal"],
         fontName=BODY_FONT,
         fontSize=11,
-        leading=10,
+        leading=14,
         alignment=0,  # 왼쪽 정렬
         textColor=colors.HexColor("#666666"),
         spaceAfter=1,
@@ -216,10 +216,10 @@ def generate_pmf_report_v2(data, output_path):
         parent=styles["Normal"],
         fontName=HEADER_FONT,
         fontSize=14,
-        leading=14,
+        leading=18,
         alignment=0,
         textColor=colors.HexColor("#1F4E79"),
-        spaceAfter=40,
+        spaceAfter=100,
     )
 
     title_style = ParagraphStyle(
@@ -230,8 +230,8 @@ def generate_pmf_report_v2(data, output_path):
         leading=60,
         alignment=1,  # 왼쪽 정렬 (표지 메인 타이틀)
         textColor=colors.HexColor("#1F4E79"),
-        spaceBefore=27,
-        spaceAfter=40,
+        spaceBefore=100,
+        spaceAfter=100,
     )
 
     cover_info_style = ParagraphStyle(
@@ -242,7 +242,7 @@ def generate_pmf_report_v2(data, output_path):
         leading=15,
         alignment=0,
         textColor=colors.HexColor("#333333"),
-        spaceBefore=30,
+        spaceBefore=100,
         spaceAfter=4,
     )
 
