@@ -208,7 +208,7 @@ def generate_pmf_report_v2(data, output_path):
         leading=10,
         alignment=0,  # 왼쪽 정렬
         textColor=colors.HexColor("#666666"),
-        spaceAfter=4,
+        spaceAfter=1,
     )
 
     cover_mid_style = ParagraphStyle(
@@ -219,7 +219,7 @@ def generate_pmf_report_v2(data, output_path):
         leading=14,
         alignment=0,
         textColor=colors.HexColor("#1F4E79"),
-        spaceAfter=16,
+        spaceAfter=40,
     )
 
     title_style = ParagraphStyle(
@@ -230,7 +230,7 @@ def generate_pmf_report_v2(data, output_path):
         leading=60,
         alignment=1,  # 왼쪽 정렬 (표지 메인 타이틀)
         textColor=colors.HexColor("#1F4E79"),
-        spaceAfter=18,
+        spaceAfter=40,
     )
 
     cover_info_style = ParagraphStyle(
