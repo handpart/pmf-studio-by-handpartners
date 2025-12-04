@@ -205,7 +205,7 @@ def generate_pmf_report_v2(data, output_path):
         parent=styles["Normal"],
         fontName=BODY_FONT,
         fontSize=11,
-        leading=14,
+        leading=10,
         alignment=0,  # 왼쪽 정렬
         textColor=colors.HexColor("#666666"),
         spaceAfter=4,
@@ -216,7 +216,7 @@ def generate_pmf_report_v2(data, output_path):
         parent=styles["Normal"],
         fontName=HEADER_FONT,
         fontSize=14,
-        leading=18,
+        leading=14,
         alignment=0,
         textColor=colors.HexColor("#1F4E79"),
         spaceAfter=16,
@@ -226,9 +226,9 @@ def generate_pmf_report_v2(data, output_path):
         "title_style",
         parent=styles["Heading1"],
         fontName=TITLE_FONT,
-        fontSize=24,
-        leading=30,
-        alignment=0,  # 왼쪽 정렬 (표지 메인 타이틀)
+        fontSize=40,
+        leading=60,
+        alignment=1,  # 왼쪽 정렬 (표지 메인 타이틀)
         textColor=colors.HexColor("#1F4E79"),
         spaceAfter=18,
     )
@@ -476,7 +476,7 @@ def generate_pmf_report_v2(data, output_path):
         ai_html = "-"
 
     section6_html = f"""
-    <b>6-1) PMF 인사이트 코멘트</b><br/>{ai_html}
+    <b>6-1) PMF 인사이트 코멘트</b><br/> - {ai_html}
     """
     elements.append(Paragraph(section6_html, body_style))
     elements.append(Spacer(1, 10))
@@ -501,9 +501,9 @@ def generate_pmf_report_v2(data, output_path):
         )
 
     section7_html = f"""
-    <b>7-1) 다음 4주 핵심 실행/실험 계획</b><br/>{_value_or_dash(next_experiments)}<br/><br/>
-    <b>7-2) 가장 큰 리스크/검증해야 할 가설</b><br/>{_value_or_dash(biggest_risk)}<br/><br/>
-    <b>7-3) HAND PARTNERS PMF 종합 코멘트</b><br/>{summary_text}<br/><br/>
+    <b>7-1) 다음 4주 핵심 실행/실험 계획</b><br/> - {_value_or_dash(next_experiments)}<br/><br/>
+    <b>7-2) 가장 큰 리스크/검증해야 할 가설</b><br/> - {_value_or_dash(biggest_risk)}<br/><br/>
+    <b>7-3) HAND PARTNERS PMF 종합 코멘트</b><br/> - {summary_text}<br/><br/>
     """
     elements.append(Paragraph(section7_html, body_style))
 
