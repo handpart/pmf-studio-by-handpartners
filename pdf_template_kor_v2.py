@@ -199,35 +199,58 @@ def generate_pmf_report_v2(data, output_path):
     styles = getSampleStyleSheet()
 
     # ---------- 스타일 ----------
+    # 표지용 스타일들 (템플릿 커버 레이아웃 참고)
+    cover_top_style = ParagraphStyle(
+        "cover_top_style",
+        parent=styles["Normal"],
+        fontName=BODY_FONT,
+        fontSize=11,
+        leading=14,
+        alignment=0,  # 왼쪽 정렬
+        textColor=colors.HexColor("#666666"),
+        spaceAfter=4,
+    )
+
+    cover_mid_style = ParagraphStyle(
+        "cover_mid_style",
+        parent=styles["Normal"],
+        fontName=HEADER_FONT,
+        fontSize=14,
+        leading=18,
+        alignment=0,
+        textColor=colors.HexColor("#1F4E79"),
+        spaceAfter=16,
+    )
+
     title_style = ParagraphStyle(
         "title_style",
         parent=styles["Heading1"],
         fontName=TITLE_FONT,
-        fontSize=28,
-        leading=34,
-        alignment=1,
+        fontSize=24,
+        leading=30,
+        alignment=0,  # 왼쪽 정렬 (표지 메인 타이틀)
         textColor=colors.HexColor("#1F4E79"),
-        spaceAfter=24,
+        spaceAfter=18,
     )
 
-    subtitle_style = ParagraphStyle(
-        "subtitle_style",
+    cover_info_style = ParagraphStyle(
+        "cover_info_style",
         parent=styles["Normal"],
-        fontName=HEADER_FONT,
-        fontSize=14,
-        leading=20,
-        alignment=1,
-        textColor=colors.HexColor("#555555"),
-        spaceAfter=10,
+        fontName=BODY_FONT,
+        fontSize=11,
+        leading=15,
+        alignment=0,
+        textColor=colors.HexColor("#333333"),
+        spaceAfter=4,
     )
 
     cover_body_style = ParagraphStyle(
         "cover_body_style",
         parent=styles["Normal"],
         fontName=BODY_FONT,
-        fontSize=11,
+        fontSize=10.5,
         leading=15,
-        alignment=1,
+        alignment=0,  # 왼쪽 정렬
         textColor=colors.HexColor("#666666"),
         spaceAfter=14,
     )
@@ -292,19 +315,28 @@ def generate_pmf_report_v2(data, output_path):
     # ---------- 1. 표지 ----------
     today = datetime.date.today().strftime("%Y-%m-%d")
 
-    elements.append(Spacer(1, 60))
-    elements.append(Paragraph("PMF 진단 리포트", title_style))
-    elements.append(Paragraph(startup_name, subtitle_style))
-    elements.append(Spacer(1, 20))
+    # 상단 여백 (템플릿 느낌을 위해 조금 넉넉하게)
+    elements.append(Spacer(1, 70))
 
-    cover_subtitle = (
-        "Global Scale-up Accelerator, HAND Partners<br/>"
-        "PMF Studio 진단 프레임워크 기반 분석 리포트"
-    )
-    elements.append(Paragraph(cover_subtitle, cover_body_style))
-    elements.append(Paragraph(today, small_style))
+    # 상단 기관/프로그램 정보
+    elements.append(Paragraph("Global Scale-up Accelerator, HAND Partners", cover_top_style))
+    elements.append(Paragraph("PMF Studio 진단 프레임워크 기반 분석 리포트", cover_mid_style))
+
+    elements.append(Spacer(1, 35))
+
+    # 메인 타이틀
+    elements.append(Paragraph("PMF 진단 리포트", title_style))
+    elements.append(Spacer(1, 15))
+
+    # 기업명 / 작성일자
+    info_html = f"""
+    <b>기업명 :</b> {startup_name}<br/>
+    <b>작성일자 :</b> {today}
+    """
+    elements.append(Paragraph(info_html, cover_info_style))
     elements.append(Spacer(1, 30))
 
+    # 소개 문단 (템플릿 텍스트와 동일한 메시지)
     intro_text = (
         "이 리포트는 HAND PARTNERS의 PMF Studio를 통해 수집된 정보를 바탕으로, "
         "현재 스타트업의 Problem–Solution Fit 및 PMF 신호를 정량·정성적으로 해석한 결과입니다. "
@@ -362,13 +394,13 @@ def generate_pmf_report_v2(data, output_path):
     customer_access = data.get("customer_access", "")
 
     section2_html = f"""
-    <b>핵심 문제 정의</b><br/>{_value_or_dash(problem)}<br/><br/>
-    <b>문제의 강도/빈도</b><br/>{_value_or_dash(problem_intensity)}<br/><br/>
-    <b>현재 고객의 대안/경쟁 솔루션</b><br/>{_value_or_dash(current_alternatives)}<br/><br/>
-    <b>고객의 지불 의사/예산</b><br/>{_value_or_dash(willingness_to_pay)}<br/><br/>
-    <b>핵심 타겟 고객 세그먼트</b><br/>{_value_or_dash(target)}<br/><br/>
-    <b>가장 먼저 공략할 Beachhead 고객</b><br/>{_value_or_dash(beachhead_customer)}<br/><br/>
-    <b>고객에 접근/확보할 수 있는 이유와 방법</b><br/>{_value_or_dash(customer_access)}
+    <b>2-1) 핵심 문제 정의</b><br/>- {_value_or_dash(problem)}<br/><br/>
+    <b>2-2) 문제의 강도/빈도</b><br/>- {_value_or_dash(problem_intensity)}<br/><br/>
+    <b>2-3) 현재 고객의 대안/경쟁 솔루션</b><br/>- {_value_or_dash(current_alternatives)}<br/><br/>
+    <b>2-4) 고객의 지불 의사/예산</b><br/>- {_value_or_dash(willingness_to_pay)}<br/><br/>
+    <b>2-5) 핵심 타겟 고객 세그먼트</b><br/>- {_value_or_dash(target)}<br/><br/>
+    <b>2-6) 가장 먼저 공략할 Beachhead 고객</b><br/>- {_value_or_dash(beachhead_customer)}<br/><br/>
+    <b>2-7) 고객에 접근/확보할 수 있는 이유와 방법</b><br/>- {_value_or_dash(customer_access)}
     """
     elements.append(Paragraph(section2_html, body_style))
     elements.append(Spacer(1, 10))
@@ -382,10 +414,10 @@ def generate_pmf_report_v2(data, output_path):
     pricing_model = data.get("pricing_model", "")
 
     section3_html = f"""
-    <b>솔루션 요약</b><br/>{_value_or_dash(solution)}<br/><br/>
-    <b>USP (차별 포인트)</b><br/>{_value_or_dash(usp)}<br/><br/>
-    <b>MVP/제품 상태</b><br/>{_value_or_dash(mvp_status)}<br/><br/>
-    <b>가격/수익모델</b><br/>{_value_or_dash(pricing_model)}
+    <b>3-1) 솔루션 요약</b><br/> - {_value_or_dash(solution)}<br/><br/>
+    <b>3-2) USP (차별 포인트)</b><br/> - {_value_or_dash(usp)}<br/><br/>
+    <b>3-3) MVP/제품 상태</b><br/> - {_value_or_dash(mvp_status)}<br/><br/>
+    <b>3-4) 가격/수익모델</b><br/> - {_value_or_dash(pricing_model)}
     """
     elements.append(Paragraph(section3_html, body_style))
     elements.append(Spacer(1, 10))
@@ -401,13 +433,13 @@ def generate_pmf_report_v2(data, output_path):
     key_feedback = data.get("key_feedback", "")
 
     section4_html = f"""
-    <b>시장/기회 관련 정보</b><br/>{_value_or_dash(market_size)}<br/><br/>
-    <b>현재 사용자 수 및 주요 지표</b><br/>
-    - 사용자 수: {_value_or_dash(users_count)}<br/>
-    - 재사용/활성 사용자 신호: {_value_or_dash(repeat_usage)}<br/>
-    - 리텐션/이탈 관련 신호: {_value_or_dash(retention_signal)}<br/>
-    - 매출/유료 전환 현황: {_value_or_dash(revenue_status)}<br/><br/>
-    <b>핵심 고객 피드백</b><br/>{_value_or_dash(key_feedback)}
+    <b>4-1) 시장/기회 관련 정보</b><br/> - {_value_or_dash(market_size)}<br/><br/>
+    <b>4-2) 현재 사용자 수 및 주요 지표</b><br/>
+    - 사용자 수 : {_value_or_dash(users_count)}<br/>
+    - 재사용/활성 사용자 신호 : {_value_or_dash(repeat_usage)}<br/>
+    - 리텐션/이탈 관련 신호 : {_value_or_dash(retention_signal)}<br/>
+    - 매출/유료 전환 현황 : {_value_or_dash(revenue_status)}<br/><br/>
+    <b>4-3) 핵심 고객 피드백</b><br/> - {_value_or_dash(key_feedback)}
     """
     elements.append(Paragraph(section4_html, body_style))
     elements.append(Spacer(1, 10))
@@ -421,26 +453,30 @@ def generate_pmf_report_v2(data, output_path):
     referral_signal = data.get("referral_signal", "")
 
     section5_html = f"""
-    <b>주요 유입/세일즈 채널</b><br/>{_value_or_dash(channels)}<br/><br/>
-    <b>CAC/LTV 추정치(대략)</b><br/>{_value_or_dash(cac_ltv_estimate)}<br/><br/>
-    <b>PMF Pull Signal (없으면 큰일 나는 반응/사례)</b><br/>{_value_or_dash(pmf_pull_signal)}<br/><br/>
-    <b>추천/바이럴 신호</b><br/>{_value_or_dash(referral_signal)}
+    <b>5-1) 주요 유입/세일즈 채널</b><br/> - {_value_or_dash(channels)}<br/><br/>
+    <b>5-2) CAC/LTV 추정치(대략)</b><br/> - {_value_or_dash(cac_ltv_estimate)}<br/><br/>
+    <b>5-3) PMF Pull Signal (없으면 큰일 나는 반응/사례)</b><br/> - {_value_or_dash(pmf_pull_signal)}<br/><br/>
+    <b>5-4) 추천/바이럴 신호</b><br/> - {_value_or_dash(referral_signal)}
     """
     elements.append(Paragraph(section5_html, body_style))
     elements.append(Spacer(1, 10))
 
     # ---------- 7. AI 기반 PMF 인사이트 요약 ----------
-    elements.append(Paragraph("6. AI 기반 PMF 인사이트 요약", section_title_style))
+    elements.append(Paragraph("6. 응답 기반 PMF 인사이트 요약", section_title_style))
 
     ai_summary = data.get("ai_summary", "")
     if ai_summary:
         # 줄바꿈을 PDF용 <br/>로 변환
-        ai_html = ai_summary.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br/>")
+        ai_html = (
+            ai_summary.replace("\r\n", "\n")
+            .replace("\r", "\n")
+            .replace("\n", "<br/>")
+        )
     else:
         ai_html = "-"
 
     section6_html = f"""
-    <b>Gemini 기반 요약 코멘트</b><br/>{ai_html}
+    <b>6-1) PMF 인사이트 코멘트</b><br/>{ai_html}
     """
     elements.append(Paragraph(section6_html, body_style))
     elements.append(Spacer(1, 10))
@@ -459,15 +495,15 @@ def generate_pmf_report_v2(data, output_path):
     else:
         # 2) 비어 있으면 PMF 점수/단계/품질을 기반으로 규칙 기반 코멘트 생성
         summary_text = _build_rule_based_summary(
-            data.get("pmf_score_raw"),
-            data.get("validation_stage_raw"),
+            pmf_score_raw,
+            validation_stage_raw,
             data_quality_score,
         )
 
     section7_html = f"""
-    <b>다음 4주 핵심 실행/실험 계획</b><br/>{_value_or_dash(next_experiments)}<br/><br/>
-    <b>가장 큰 리스크/검증해야 할 가설</b><br/>{_value_or_dash(biggest_risk)}
-    <b>HAND PARTNERS PMF 종합 코멘트</b><br/>{summary_text}<br/><br/>
+    <b>7-1) 다음 4주 핵심 실행/실험 계획</b><br/>{_value_or_dash(next_experiments)}<br/><br/>
+    <b>7-2) 가장 큰 리스크/검증해야 할 가설</b><br/>{_value_or_dash(biggest_risk)}<br/><br/>
+    <b>7-3) HAND PARTNERS PMF 종합 코멘트</b><br/>{summary_text}<br/><br/>
     """
     elements.append(Paragraph(section7_html, body_style))
 
