@@ -177,6 +177,143 @@ def _build_rule_based_summary(score, stage, quality_score=None):
     return base
 
 
+def _build_structured_hands_comment(data, data_quality_score, data_quality_label):
+    """
+    HAND PARTNERS PMF 종합 코멘트:
+    - ① 문제 정의 및 고객 페르소나 관점
+    - ② 솔루션 및 가치 제안 관점
+    - ③ 시장 검증 및 Traction 관점
+    - ④ Go-to-Market 및 PMF 신호 관점
+    을 한 번에 만들어 주는 함수.
+    데이터 품질/모드에 따라 톤을 달리함.
+    """
+    mode = data.get("pmf_score_mode", "normal")
+    validation_stage = data.get("validation_stage", "") or data.get("validation_stage_raw", "")
+    dq = data_quality_score or 0
+
+    def has_long_text(key, min_len=40):
+        txt = (data.get(key) or "").strip()
+        return len(txt) >= min_len
+
+    # 각 관점별로 “내용이 어느 정도 있는지” 대략 판단
+    problem_ok = has_long_text("problem") and has_long_text("target")
+    solution_ok = has_long_text("solution") and has_long_text("usp")
+    traction_ok = has_long_text("users_count", 10) or has_long_text("revenue_status", 20)
+    gtm_ok = has_long_text("channels") or has_long_text("pmf_pull_signal")
+
+    # 1) 극저품질/invalid 케이스: 네 파트 모두 "어떻게 작성해야 하는지" 안내
+    if mode == "invalid" or dq < 25:
+        p1 = (
+            "문제 정의와 타겟 고객 설명이 매우 간략하거나 비어 있어, 현재로서는 Problem–Customer Fit을 "
+            "판단하기 어렵습니다. 설문을 다시 작성하실 때에는 실제 고객이 겪는 상황, 업무 맥락, "
+            "기존에 사용 중인 대체 솔루션과 그 한계를 3~5문장 이상으로 자세히 적어주시기를 권장드립니다."
+        )
+        p2 = (
+            "솔루션과 가치 제안 역시 한두 단어 수준으로만 기입되어 있어, 어떤 방식으로 문제를 해결하고 "
+            "기존 대안과 무엇이 다른지 파악하기 어렵습니다. 제품/서비스의 주요 기능과 흐름, 고객이 느끼는 "
+            "'전후 대비 변화'를 예시와 함께 구체적으로 작성해주시면 PMF 진단의 정밀도가 크게 높아집니다."
+        )
+        p3 = (
+            "시장 검증 및 Traction 관련 정보(사용자 수, 재사용률, 매출 전환 등)가 거의 없거나 숫자만 나열된 형태입니다. "
+            "실제 사용 패턴, 고객 피드백, 계약·해지 사례 등 정성·정량 정보를 함께 적어주셔야 "
+            "현재 단계의 PMF 신호를 의미 있게 해석할 수 있습니다."
+        )
+        p4 = (
+            "Go-to-Market 전략과 PMF 신호(유입 채널, 추천/바이럴, Pull Signal 등)에 대한 서술도 부족한 편입니다. "
+            "어떤 채널을 통해 실제 고객 접점을 만들고 있는지, 제품이 중단되었을 때 고객이 보이는 반응, "
+            "추천이나 소개가 발생한 사례 등을 구체적으로 보완해 주시면 다음 번 리포트에서 훨씬 풍부한 인사이트를 "
+            "드릴 수 있습니다."
+        )
+        return p1, p2, p3, p4
+
+    # 2) 중간 품질(reference) – 구조는 있으나 디테일 보완 필요
+    if dq < 60:
+        p1 = (
+            "핵심 문제와 고객 페르소나가 어느 정도 서술되어 있으나, 여전히 일부 표현이 추상적이어서 "
+            "실제 현장에서의 Pain 강도와 빈도를 정량적으로 파악하기에는 다소 부족합니다. "
+            "고객 인터뷰 인용, 발생 빈도(예: 주 2~3회), 손실 규모 등 구체적인 사례를 추가하면 "
+            "Problem–Customer Fit에 대한 신뢰도가 한층 올라갈 수 있습니다."
+        )
+        p2 = (
+            "솔루션과 USP가 큰 방향에서는 전달되지만, 고객 입장에서 어떤 상황에서 어떤 과정을 통해 "
+            "가치를 체감하는지에 대한 묘사가 다소 제한적입니다. 대표적인 사용 시나리오 한두 가지를 정리하고, "
+            "기존 대안과 비교했을 때 시간·비용·성과 측면에서 어떤 차이가 나는지 수치나 사례로 표현해 보시는 것을 추천드립니다."
+        )
+        p3 = (
+            "시장 검증 및 Traction 데이터는 일부 확보되어 있으나, 아직 일관된 패턴을 읽기에는 표본과 시간축이 충분하지 않습니다. "
+            "현재까지의 사용자 수·재사용률·유료 전환 비율를 간단한 표나 코호트 형태로 정리하면, "
+            "어떤 고객군에서 PMF 신호가 먼저 나타나고 있는지 더 명확히 보일 것입니다."
+        )
+        p4 = (
+            "Go-to-Market 전략과 PMF 신호는 실험 단계에 가까운 모습입니다. "
+            "주요 유입 채널별 전환율과 CAC를 대략적으로라도 계산해 보고, 작은 규모라도 추천/소개가 발생하는지 추적해 보시면 "
+            "어떤 채널과 세그먼트에 집중해야 하는지 방향성이 더 분명해질 것입니다."
+        )
+        return p1, p2, p3, p4
+
+    # 3) 데이터 품질이 충분히 높은(normal) 케이스
+    # 문제/고객
+    if problem_ok:
+        p1 = (
+            "핵심 문제와 타겟 고객 페르소나가 비교적 명확하게 정의되어 있어, Problem–Customer Fit의 기반은 "
+            "이미 어느 정도 마련된 상태로 보입니다. 다만 고객 세그먼트 안에서도 문제가 특히 심각하게 나타나는 "
+            "핵심 서브 세그먼트를 한 번 더 좁혀 보고, 그 집단을 기준으로 인터뷰와 파일럿을 설계하면 "
+            "PMF 탐색 속도를 더 높일 수 있습니다."
+        )
+    else:
+        p1 = (
+            "문제와 고객에 대한 설명은 존재하지만 일부 핵심 요소가 비어 있거나 간략하게 서술되어 있어, "
+            "어떤 세그먼트에서 문제가 가장 강하게 발생하는지까지는 아직 선명하게 드러나지 않습니다. "
+            "기존 고객 인터뷰 내용을 바탕으로 '누가, 언제, 어떤 맥락에서' 고통을 느끼는지 예시 위주로 보완해 보시면 좋겠습니다."
+        )
+
+    # 솔루션/가치
+    if solution_ok:
+        p2 = (
+            "솔루션과 가치 제안(USP)이 비교적 구체적으로 정리되어 있어, 고객 문제와의 연결 구조는 잘 보이는 편입니다. "
+            "향후에는 실제 사용 데이터·고객 피드백을 활용해 '어떤 기능이 어떤 고객에게 가장 큰 임팩트를 주는지'를 "
+            "더 세분화하면, 로드맵 우선순위와 가격 전략을 설계하는 데 도움이 될 것입니다."
+        )
+    else:
+        p2 = (
+            "솔루션과 USP에 대한 개요는 있으나, 고객 입장에서 느끼는 전후 대비 변화와 기존 대안 대비 차별점이 "
+            "조금 더 선명하게 드러나면 좋겠습니다. 대표 기능 2~3개를 골라 구체적인 사용 시나리오와 함께 정리해 보면 "
+            "투자자·고객 모두에게 가치 제안을 설명하기가 훨씬 쉬워집니다."
+        )
+
+    # Traction
+    if traction_ok:
+        p3 = (
+            "시장 검증 및 Traction 측면에서는 초기이지만 의미 있는 신호들이 일부 관찰됩니다. "
+            "특히 재사용률·유료 전환 여부를 주기적으로 트래킹하면서, 어떤 고객 프로파일에서 "
+            "지속 사용과 과금 의사가 동시에 나타나는지 살펴보는 것이 중요합니다. "
+            "이 데이터를 기반으로 '핵심 ICP'를 정의하면 이후 세일즈/마케팅 효율이 크게 개선될 수 있습니다."
+        )
+    else:
+        p3 = (
+            "현재까지 시장 검증·Traction 관련 정보는 제한적인 수준입니다. "
+            "단순한 지표라도 월별 활성 사용자 수, 체험→유료 전환 비율, 해지 사유 등을 정리해 두면 "
+            "PMF 관점에서 어떤 가설이 맞고 틀렸는지 훨씬 빠르게 검증할 수 있습니다."
+        )
+
+    # Go-to-Market / PMF 신호
+    if gtm_ok:
+        p4 = (
+            "Go-to-Market 및 PMF 신호 측면에서는 일부 채널과 고객 관계에서 긍정적인 징후가 보이기 시작했습니다. "
+            "특히 추천·소개, 기능 장애 시의 강한 문제 제기, 도입 후 확장 사용(조직 내 다른 팀 확산 등)이 관찰된다면 "
+            "그 고객군은 사실상의 PMF 후보 세그먼트로 볼 수 있습니다. 이들을 기준으로 메시지와 채널 전략을 정교화해 보시길 권장드립니다."
+        )
+    else:
+        p4 = (
+            "Go-to-Market 전략과 PMF 신호는 아직 초기 탐색 단계에 머물러 있습니다. "
+            "1~2개의 핵심 채널을 정해 작은 규모의 실험을 반복하면서, 리드→데모→유료 전환까지의 퍼널과 "
+            "고객의 언어를 기록해 두면 이후 확장 전략을 설계하는 데 큰 자산이 됩니다."
+        )
+
+    return p1, p2, p3, p4
+
+
+
 def _value_or_dash(v: str):
     return v if (v and str(v).strip()) else "-"
 
@@ -219,7 +356,7 @@ def generate_pmf_report_v2(data, output_path):
         leading=18,
         alignment=0,
         textColor=colors.HexColor("#1F4E79"),
-        spaceAfter=100,
+        spaceAfter=80,
     )
 
     title_style = ParagraphStyle(
@@ -230,7 +367,7 @@ def generate_pmf_report_v2(data, output_path):
         leading=60,
         alignment=1,  # 왼쪽 정렬 (표지 메인 타이틀)
         textColor=colors.HexColor("#1F4E79"),
-        spaceBefore=90,
+        spaceBefore=80,
         spaceAfter=100,
     )
 
@@ -276,7 +413,7 @@ def generate_pmf_report_v2(data, output_path):
         "body_style",
         parent=styles["Normal"],
         fontName=BODY_FONT,
-        fontSize=10,
+        fontSize=11,
         leading=14,
         textColor=colors.HexColor("#222222"),
     )
@@ -486,26 +623,24 @@ def generate_pmf_report_v2(data, output_path):
     # ---------- 8. 종합 제언 및 다음 스텝 ----------
     elements.append(Paragraph("7. HAND PARTNERS PMF 종합 코멘트 및 다음 스텝", section_title_style))
 
-    summary = data.get("summary", "")
-    recommendations = data.get("recommendations", "")
     next_experiments = data.get("next_experiments", "")
     biggest_risk = data.get("biggest_risk", "")
 
-    # 1) 사용자가 summary/recommendations를 직접 넣은 경우 우선 사용
-    if summary or recommendations:
-        summary_text = summary or recommendations
-    else:
-        # 2) 비어 있으면 PMF 점수/단계/품질을 기반으로 규칙 기반 코멘트 생성
-        summary_text = _build_rule_based_summary(
-            pmf_score_raw,
-            validation_stage_raw,
-            data_quality_score,
-        )
+    # HAND PARTNERS 코멘트: 네 영역으로 구조화
+    part1, part2, part3, part4 = _build_structured_hands_comment(
+        data,
+        data_quality_score,
+        data_quality_label,
+    )
 
     section7_html = f"""
     <b>7-1) 다음 4주 핵심 실행/실험 계획</b><br/> - {_value_or_dash(next_experiments)}<br/><br/>
     <b>7-2) 가장 큰 리스크/검증해야 할 가설</b><br/> - {_value_or_dash(biggest_risk)}<br/><br/>
-    <b>7-3) HAND PARTNERS PMF 종합 코멘트</b><br/> - {summary_text}<br/><br/>
+    <b>7-3) HAND PARTNERS PMF 종합 코멘트</b><br/><br/>
+    <b>① 문제 정의 및 고객 페르소나 관점</b><br/> - {part1}<br/><br/>
+    <b>② 솔루션 및 가치 제안 관점</b><br/> - {part2}<br/><br/>
+    <b>③ 시장 검증 및 Traction 관점</b><br/> - {part3}<br/><br/>
+    <b>④ Go-to-Market 및 PMF 신호 관점</b><br/> - {part4}
     """
     elements.append(Paragraph(section7_html, body_style))
 
